@@ -1,0 +1,115 @@
+[project]
+name = "userbot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.21.0",
+    "msgspec>=0.19.0",
+    "python-dotenv>=1.1.0",
+    "redis[asyncio]>=6.1.0",
+    "sqlalchemy>=2.0.41",
+    "telethon>=1.40.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src_zoo_park"
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+allow_redefinition = true
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+extra_checks = true
+follow_imports = "skip"
+follow_imports_for_stubs = false
+ignore_missing_imports = false
+namespace_packages = true
+no_implicit_optional = true
+no_implicit_reexport = true
+pretty = true
+show_absolute_path = true
+show_error_codes = true
+show_error_context = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+disable_error_code = ["no-redef"]
+exclude = ["\\.?venv", "\\.idea", "\\.tests?"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.ruff]
+src = ["app"]
+line-length = 120
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    "__pypackages__",
+    "__pycache__",
+    "*.pyi",
+    "venv",
+    ".venv",
+]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "A003",
+    "ANN002",
+    "ANN003",
+    "ANN401",
+    "C901",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D106",
+    "D107",
+    "D203",
+    "D205",
+    "D212",
+    "ERA001",
+    "FA100",
+    "FA102",
+    "FBT001",
+    "FBT002",
+    "FIX002",
+    "I001",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR5501",
+    "PLW0120",
+    "RUF001",
+    "TD002",
+    "TD003",
+    "TC006",
+    "T201",
+    "S311",
+    "RUF002",
+    "RUF003",
+    "BLE001",
+    "W291",
+    "G004",
+    "TRY401"
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
