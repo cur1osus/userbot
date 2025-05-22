@@ -48,4 +48,4 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
 
             logger.info(f"Сообщение было отправлено успешно {user.id_user}, {user.username}")
         except Exception as e:
-            logger.info(f"Произошла ошибка при отправке сообщения: {e.with_traceback}\n")
+            logger.info(f"Произошла ошибка при отправке сообщения: {e}\n")

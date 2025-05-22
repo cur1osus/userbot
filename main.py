@@ -39,7 +39,7 @@ async def main() -> None:
     # Инициализация Telegram клиента
     try:
         client = TelegramClient(
-            session="Formatter",
+            session="userbot",
             api_id=config.api_id,
             api_hash=config.api_hash,
         )
