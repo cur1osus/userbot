@@ -45,4 +45,5 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(50), nullable=True)
     message_id: Mapped[str] = mapped_column(String(50), nullable=True)
     chat_id: Mapped[str] = mapped_column(String(50), nullable=True)
+    additional_message: Mapped[str] = mapped_column(String(500))
     sended: Mapped[bool] = mapped_column(default=False)

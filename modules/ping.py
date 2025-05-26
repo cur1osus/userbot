@@ -4,7 +4,7 @@ import time
 from telethon import TelegramClient, events
 
 
-def register(client: TelegramClient):
+def register(client: TelegramClient, *args, **kwargs):
     """Регистрация команды ping."""
     logger = logging.getLogger(__name__)
 

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from background_jobs import send_message
+from background_jobs import handling_difference_update_chanel, send_message
 from config.config import load_config
 from db.redis.redis_client import RedisClient
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
@@ -47,33 +47,38 @@ async def main() -> None:
     except Exception as e:
         logger.exception(f"Ошибка при инициализации клиента: {e}")
         return
-
     # Регистрация модулей
     modules = [
         ping.register,  # Передаем sqlalchemy_client
         id.register,
         restart.register,
-        help.register,
-        lambda c: start.register(c, redis_client),
+        lambda c: help.register(c, redis_client),
         lambda c: stop.register(c, redis_client),
-        lambda c: ban.register(c, sqlalchemy_client),
-        lambda c: chat.register(c, sqlalchemy_client),
-        lambda c: ignore.register(c, sqlalchemy_client),
-        lambda c: keyword.register(c, sqlalchemy_client),
-        lambda c: answer.register(c, sqlalchemy_client),
-        lambda c: new_msg.register(c, sqlalchemy_client),
+        lambda c: start.register(c, redis_client, sqlalchemy_client),
+        lambda c: ban.register(c, sqlalchemy_client, redis_client),
+        lambda c: chat.register(c, sqlalchemy_client, redis_client),
+        lambda c: ignore.register(c, sqlalchemy_client, redis_client),
+        lambda c: keyword.register(c, sqlalchemy_client, redis_client),
+        lambda c: answer.register(c, sqlalchemy_client, redis_client),
+        lambda c: new_msg.register(c, sqlalchemy_client, redis_client),
     ]
     for module in modules:
         try:
             module(client)
         except Exception as e:
-            logger.exception(f"Ошибка при регистрации модуля {module.__name__}: {e}")
+            logger.exception(f"Ошибка при регистрации модуля {module.__doc__}: {e}")
 
     # Создание и настройка планировщика
     scheduler = Scheduler()
     # scheduler.every().day.at("10:30").do(send_daily_report, client=client)
     scheduler.every(1).second.do(
         send_message,
+        client=client,
+        redis_client=redis_client,
+        sqlalchemy_client=sqlalchemy_client,
+    )
+    scheduler.every(10).seconds.do(
+        handling_difference_update_chanel,
         client=client,
         redis_client=redis_client,
         sqlalchemy_client=sqlalchemy_client,

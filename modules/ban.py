@@ -1,5 +1,6 @@
 import logging
 
+from db.redis.redis_client import RedisClient
 from db.sqlalchemy.models import BannedUser
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from sqlalchemy import delete, insert, update
@@ -7,13 +8,13 @@ from telethon import TelegramClient, events
 from utils.func import Function as fn  # noqa: N813
 
 
-def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient) -> None:
+def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_client: RedisClient) -> None:
     logger = logging.getLogger(__name__)
     sessionmaker = sqlalchemy_client.session_factory
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^ban"))
     async def handle_ban(event: events.NewMessage.Event) -> None:
-        me = await client.get_me()
+        me = await fn.get_me_cashed(client, redis_client)
         async with sessionmaker() as session:
             args = fn.parse_command(event.message.message)
             banned_usernames = await fn.get_banned_usernames(sqlalchemy_client)
@@ -30,14 +31,14 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient) -> Non
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^all ban$"))
     async def handle_all_ban(event: events.NewMessage.Event) -> None:
-        me = await client.get_me()
+        me = await fn.get_me_cashed(client, redis_client)
         banned_usernames = await fn.get_banned_usernames(sqlalchemy_client)
         response = ", ".join(banned_usernames) if banned_usernames else "Нет забаненных пользователей"
         await client.send_message(entity=me, message=response, reply_to=event.message)
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^unban"))
     async def handle_unban(event: events.NewMessage.Event) -> None:
-        me = await client.get_me()
+        me = await fn.get_me_cashed(client, redis_client)
         async with sessionmaker() as session:
             args = fn.parse_command(event.message.message)
             banned_usernames = await fn.get_banned_usernames(sqlalchemy_client)
@@ -59,7 +60,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient) -> Non
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^block$"))
     async def handle_block(event: events.NewMessage.Event) -> None:
-        me = await client.get_me()
+        me = await fn.get_me_cashed(client, redis_client)
         async with sessionmaker() as session:
             not_banned_usernames = await fn.get_not_banned_usernames(sqlalchemy_client)
             for user in not_banned_usernames:

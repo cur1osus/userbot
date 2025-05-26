@@ -5,7 +5,7 @@ import sys
 from telethon import TelegramClient, events
 
 
-def register(client: TelegramClient) -> None:
+def register(client: TelegramClient, *args, **kwargs) -> None:
     """Регистрация команды restart."""
     logger = logging.getLogger(__name__)
 
