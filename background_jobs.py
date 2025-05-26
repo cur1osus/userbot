@@ -50,7 +50,7 @@ async def handling_difference_update_chanel(
             msg_text = update.message
             if not await fn.is_acceptable_message(msg_text, sqlalchemy_client, redis_client):
                 return
-            mention = await fn.parse_mention(update)
+            mention = await fn.parse_mention(update.message)
             if not mention:
                 return
             try:

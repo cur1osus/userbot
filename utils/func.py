@@ -1,6 +1,7 @@
 import logging
 import random
 from collections.abc import Callable
+import re
 from typing import Any
 
 from db.redis.redis_client import RedisClient
@@ -117,16 +118,21 @@ class Function:
             logger.info(f"Произошла ошибка при разблокировке пользователя: {e}")
 
     @staticmethod
-    async def parse_mention(msg: Message) -> str | None:
-        msg_text = msg.message
-        mention = None
-        if not msg.entities:
-            return mention
-        for entity in msg.entities:
-            if isinstance(entity, MessageEntityMention):
-                offset = entity.offset + 1
-                mention = msg_text[offset : entity.offset + entity.length]
-        return mention
+    async def parse_mention(text: str) -> str | None:
+        """
+        Извлекает username Telegram из текста.
+        Username должен начинаться с @ и содержать буквы, цифры или подчеркивания (от 5 до 32 символов).
+
+        Args:
+            text (str): Входной текст, содержащий username Telegram.
+
+        Returns:
+            str or None: Найденный username Telegram или None, если username не найден.
+
+        """
+        pattern = r"@[A-Za-z0-9_]{5,32}\b"
+        match = re.search(pattern, text)
+        return match[0][1:] if match else None
 
     @staticmethod
     async def extract_ids_message(event: events.NewMessage.Event) -> None:
