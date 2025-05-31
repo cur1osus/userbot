@@ -47,3 +47,19 @@ class User(Base):
     chat_id: Mapped[str] = mapped_column(String(50), nullable=True)
     additional_message: Mapped[str] = mapped_column(String(500))
     sended: Mapped[bool] = mapped_column(default=False)
+
+
+class UserManager(Base):
+    __tablename__ = "user_managers"
+
+    id_user: Mapped[int] = mapped_column(BigInteger, unique=True)
+    username: Mapped[str] = mapped_column(String(50), nullable=True)
+
+
+class Bot(Base):
+    __tablename__ = "bots"
+
+    name: Mapped[str] = mapped_column(String(50))
+    api_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    api_hash: Mapped[str] = mapped_column(String(100))
+    path_session: Mapped[str] = mapped_column(String(100))

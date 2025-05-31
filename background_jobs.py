@@ -46,7 +46,6 @@ async def handling_difference_update_chanel(
         if not updates:
             continue
         for update in updates:
-            logger.info(update.message)
             msg_text = update.message
             if not await fn.is_acceptable_message(msg_text, sqlalchemy_client, redis_client):
                 return

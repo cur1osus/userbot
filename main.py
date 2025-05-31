@@ -1,14 +1,27 @@
+import argparse
 import asyncio
 import logging
 
 from background_jobs import handling_difference_update_chanel, send_message
 from config.config import load_config
 from db.redis.redis_client import RedisClient
+from db.sqlalchemy.models import Bot
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
-from modules import answer, ban, chat, help, id, ignore, keyword, new_msg, ping, restart, start, stop  # noqa: A004
+from modules import answer, ban, chat, help, id, ignore, keyword, new_msg, ping, start, stop  # noqa: A004
 from scheduler import Scheduler
+from sqlalchemy import select
 from telethon import TelegramClient
 from utils.logger import setup_logger
+
+# Создаём объект парсера аргументов
+parser = argparse.ArgumentParser(description="Запуск Telegram-бота с аргументами")
+parser.add_argument("phone", type=str, help="Номер телефона бота")
+
+# Парсим аргументы
+args = parser.parse_args()
+
+# Переменная режима
+bot_phone = args.phone
 
 
 async def main() -> None:
@@ -31,19 +44,25 @@ async def main() -> None:
     try:
         await redis_client.connect()
         await sqlalchemy_client.connect()
-        await redis_client.save("work", value=False)
+        await redis_client.save("work", value=False)  # type: ignore
     except Exception as e:
         logger.exception(f"Ошибка при подключении к базам данных: {e}")
         return
 
     # Инициализация Telegram клиента
+    async with sqlalchemy_client.session_factory() as session:  # type: ignore
+        bot: Bot = await session.scalar(select(Bot).where(Bot.name == bot_phone))
+        if not bot:
+            logger.error(f"Бот {bot_phone} не найден в базе данных")
+            return
     try:
-        client = TelegramClient(
-            session="userbot",
-            api_id=config.api_id,
-            api_hash=config.api_hash,
-        )
-        logger.info("Клиент Telegram инициализирован")
+        client = TelegramClient(bot.path_session, bot.api_id, bot.api_hash)
+        await client.connect()
+        if not await client.is_user_authorized():
+            logger.info("Сессия не авторизована :(")
+        else:
+            logger.info("Сессия успешно загружена!")
+            logger.info("Клиент Telegram инициализирован")
     except Exception as e:
         logger.exception(f"Ошибка при инициализации клиента: {e}")
         return
@@ -51,7 +70,7 @@ async def main() -> None:
     modules = [
         ping.register,  # Передаем sqlalchemy_client
         id.register,
-        restart.register,
+        # restart.register,
         lambda c: help.register(c, redis_client),
         lambda c: stop.register(c, redis_client),
         lambda c: start.register(c, redis_client, sqlalchemy_client),

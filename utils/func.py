@@ -1,13 +1,14 @@
 import logging
 import random
-from collections.abc import Callable
 import re
+from collections.abc import Callable
 from typing import Any
 
 from db.redis.redis_client import RedisClient
 from db.sqlalchemy.models import BannedUser, IgnoredWord, Keyword, MessageToAnswer, MonitoringChat
 from db.sqlalchemy.models import User as UserDB
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
+from Levenshtein import distance as levenshtein_distance
 from sqlalchemy import select
 from telethon import TelegramClient, events
 from telethon.errors.rpcerrorlist import UsernameNotOccupiedError
@@ -18,7 +19,6 @@ from telethon.tl.types import (
     ChannelMessagesFilter,
     InputChannel,
     Message,
-    MessageEntityMention,
     MessageRange,
     User,
 )
@@ -141,16 +141,73 @@ class Function:
         return f"{from_chat}:{message_id}"
 
     @staticmethod
+    async def normalize_set(items: set) -> set:
+        """
+        Приводит набор слов или предложений к единому стандарту.
+        :param items: Набор слов или предложений.
+        :return: Нормализованный набор.
+        """
+        normalized = set()
+        for item in items:
+            if normalized_item := re.sub(r"[^\w\s]", "", item.lower()).strip():
+                normalized.add(normalized_item)
+        return normalized
+
+    @staticmethod
     async def is_acceptable_message(
         message: str,
         sqlalchemy_client: SQLAlchemyClient,
         redis_client: RedisClient,
+        threshold_word: int = 2,
+        threshold_sentence: float = 0.2,
     ) -> bool:
-        message = message.lower()
-        keywords = await Function.get_keywords(sqlalchemy_client, redis_client, cashed=True)
-        ignored_words = await Function.get_ignored_words(sqlalchemy_client, redis_client, cashed=True)
-        r = any(keyword in message for keyword in keywords)
-        return r and all(ignored_word not in message for ignored_word in ignored_words)
+        # sourcery skip: assign-if-exp, boolean-if-exp-identity, reintroduce-else, remove-unnecessary-cast
+        """
+        Проверяет, подходит ли сообщение, используя слова и предложения как триггеры/исключения.
+
+        :param message: Строка сообщения.
+        :param triggers: Множество слов или предложений-триггеров.
+        :param excludes: Множество слов или предложений-исключений.
+        :param threshold_word: Порог расстояния Левенштейна для слов.
+        :param threshold_sentence: Максимальная доля ошибок для предложений.
+        :return: True, если сообщение подходит, иначе False.
+        """
+        # Приведение текста к единому формату
+        triggers = await Function.normalize_set(
+            await Function.get_keywords(sqlalchemy_client, redis_client, cashed=True),
+        )
+        excludes = await Function.normalize_set(
+            await Function.get_ignored_words(sqlalchemy_client, redis_client, cashed=True),
+        )
+        formatted_message = re.sub(r"[^\w\s]", "", message.lower())
+        words = formatted_message.split()
+        sentences = [sentence.strip() for sentence in re.split(r"[.!?]", formatted_message) if sentence.strip()]
+
+        def is_similar_word(word: str, word_set: set) -> bool:
+            """Проверяет, есть ли похожее слово в наборе с учетом расстояния Левенштейна."""
+            return any(levenshtein_distance(word, target_word) <= threshold_word for target_word in word_set)
+
+        def is_similar_sentence(sentence: str, sentence_set: set) -> bool:
+            """Проверяет, есть ли похожее предложение в наборе с учетом относительного расстояния."""
+            return any(
+                levenshtein_distance(sentence, target_sentence) / max(len(sentence), len(target_sentence))
+                <= threshold_sentence
+                for target_sentence in sentence_set
+            )
+
+        # Проверяем исключающие слова и предложения
+        if any(is_similar_word(word, excludes) for word in words) or any(
+            is_similar_sentence(sentence, excludes) for sentence in sentences
+        ):
+            return False
+
+        # Проверяем триггеры в словах и предложениях
+        if any(is_similar_word(word, triggers) for word in words) or any(  # noqa: SIM103
+            is_similar_sentence(sentence, triggers) for sentence in sentences
+        ):
+            return True
+
+        return False
 
     @staticmethod
     async def get_me_cashed(client: Any, redis_client: RedisClient) -> int:
@@ -167,10 +224,6 @@ class Function:
             return []
         r = r[1]
         return [r.strip() for r in r.split(sep) if r]
-
-    @staticmethod
-    def parse_title(message: str) -> str:
-        return message.split("\n", 1)[0].strip()
 
     @staticmethod
     async def take_message_answer(redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient) -> str:
@@ -203,12 +256,12 @@ class Function:
         sqlalchemy_client: SQLAlchemyClient,
         redis_client: RedisClient,
         cashed: bool = False,
-    ) -> list[str]:
+    ) -> set:
         if cashed and (r := await redis_client.get("ignored_words")):
             return r
         async with sqlalchemy_client.session_factory() as session:
             r = (await session.scalars(select(IgnoredWord.word))).all()
-            r = [x.lower() for x in r]
+            r = set(r)
             await redis_client.save("ignored_words", r, 60)
             return r
 
@@ -217,12 +270,12 @@ class Function:
         sqlalchemy_client: SQLAlchemyClient,
         redis_client: RedisClient,
         cashed: bool = False,
-    ) -> list[str]:
+    ) -> set:
         if cashed and (r := await redis_client.get("keywords")):
             return r
         async with sqlalchemy_client.session_factory() as session:
             r = (await session.scalars(select(Keyword.word))).all()
-            r = [x.lower() for x in r]
+            r = set(r)
             await redis_client.save("keywords", r, 60)
             return r
 
@@ -238,13 +291,13 @@ class Function:
 
     @staticmethod
     async def add_user(sender: Any, event: events.NewMessage.Event, sqlalchemy_client: SQLAlchemyClient) -> None:
-        title = Function.parse_title(event.message.message)
+        message = event.message.message
         async with sqlalchemy_client.session_factory() as session:
             user = UserDB(
                 id_user=sender.id,
                 message_id=event.message.id,
                 chat_id=event.chat_id,
-                additional_message=title,
+                additional_message=message,
             )
             if r := sender.username:
                 user.username = r
@@ -253,13 +306,13 @@ class Function:
 
     @staticmethod
     async def add_user_v2(sender: Any, update: Message, sqlalchemy_client: SQLAlchemyClient) -> None:
-        title = Function.parse_title(update.message)
+        message = update.message
         async with sqlalchemy_client.session_factory() as session:
             user = UserDB(
                 id_user=sender.id,
                 message_id=update.id,
                 chat_id=update.peer_id.channel_id,
-                additional_message=title,
+                additional_message=message,
             )
             if r := sender.username:
                 user.username = r

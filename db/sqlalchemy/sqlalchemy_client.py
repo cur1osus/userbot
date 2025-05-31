@@ -8,7 +8,7 @@ from .models import Base
 
 
 class SQLAlchemyClient:
-    """Класс для асинхронной работы с SQLite через SQLAlchemy и aiosqlite."""
+    """Класс для асинхронной работы с mysql через SQLAlchemy и aiomysql."""
 
     def __init__(self, config: Config):
         self.config = config
@@ -17,21 +17,17 @@ class SQLAlchemyClient:
         self.logger = logging.getLogger(__name__)
 
     async def connect(self):
-        """Подключение к SQLite и создание таблиц."""
+        """Подключение к mysql и создание таблиц."""
         try:
-            self.engine = create_async_engine(self.config.sqlite_path, echo=False)
-            async with self.engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
+            self.engine = create_async_engine(self.config.mysql_path, echo=False)
             self.session_factory = sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
-            self.logger.info("Подключение к SQLite установлено")
+            self.logger.info("Подключение к mysql установлено")
         except Exception as e:
-            self.logger.error(f"Ошибка подключения к SQLite: {e}")
+            self.logger.error(f"Ошибка подключения к mysql: {e}")
             raise
 
     async def disconnect(self):
-        """Отключение от SQLite."""
+        """Отключение от mysql."""
         if self.engine:
             await self.engine.dispose()
-            self.logger.info("SQLite отключен")
-
-
+            self.logger.info("mysql отключен")
