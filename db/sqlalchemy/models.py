@@ -16,19 +16,19 @@ class MonitoringChat(Base):
 class Keyword(Base):
     __tablename__ = "keywords"
 
-    word: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    word: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
 
 
 class IgnoredWord(Base):
     __tablename__ = "ignored_words"
 
-    word: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    word: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
 
 
 class MessageToAnswer(Base):
     __tablename__ = "messages_to_answer"
 
-    sentence: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
+    sentence: Mapped[str] = mapped_column(String(1000), unique=True, nullable=False)
 
 
 class BannedUser(Base):
