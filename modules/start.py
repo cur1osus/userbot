@@ -12,7 +12,7 @@ def register(client: TelegramClient, redis_client: RedisClient, sqlalchemy_clien
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^start$"))
     async def start(event: events.NewMessage.Event) -> None:
         me = await client.get_me()
-        me_cashed = await fn.get_me_cashed(client, redis_client)
+        me_cashed = (await client.get_me()).id
         if me.id != me_cashed:
             await redis_client.save(key="me", value=me.id)
             await fn.reset_users_sended_status(sqlalchemy_client)

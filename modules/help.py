@@ -9,7 +9,7 @@ def register(client: TelegramClient, redis_client: RedisClient) -> None:
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^help$"))
     async def handle_help(event: events.NewMessage.Event) -> None:
-        me = await fn.get_me_cashed(client, redis_client)
+        me = (await client.get_me()).id
         await client.send_message(
             entity=me,
             message="""

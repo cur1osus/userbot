@@ -13,7 +13,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^chat"))
     async def handle_chat(event: events.NewMessage.Event) -> None:
         async with sessionmaker() as session:
-            me = await fn.get_me_cashed(client, redis_client)
+            me = (await client.get_me()).id
             args = fn.parse_command(event.message.message)
             monitoring_chat = await fn.get_monitoring_chat(sqlalchemy_client)
             for chat_id in args:
@@ -26,7 +26,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^all chat$"))
     async def handle_all_chat(event: events.NewMessage.Event) -> None:
-        me = await fn.get_me_cashed(client, redis_client)
+        me = (await client.get_me()).id
         monitoring_chat = await fn.get_monitoring_chat(sqlalchemy_client)
         response = (
             fn.collect_in_text(
@@ -42,7 +42,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^unchat"))
     async def handle_unchat(event: events.NewMessage.Event) -> None:
         async with sessionmaker() as session:
-            me = await fn.get_me_cashed(client, redis_client)
+            me = (await client.get_me()).id
             counter_del = 0
             args = fn.parse_command(event.message.message)
             monitoring_chat = await fn.get_monitoring_chat(sqlalchemy_client)

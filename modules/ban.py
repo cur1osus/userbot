@@ -14,7 +14,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^ban"))
     async def handle_ban(event: events.NewMessage.Event) -> None:
-        me = await fn.get_me_cashed(client, redis_client)
+        me = (await client.get_me()).id
         async with sessionmaker() as session:
             args = fn.parse_command(event.message.message)
             banned_usernames = await fn.get_banned_usernames(sqlalchemy_client)
@@ -31,14 +31,14 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^all ban$"))
     async def handle_all_ban(event: events.NewMessage.Event) -> None:
-        me = await fn.get_me_cashed(client, redis_client)
+        me = (await client.get_me()).id
         banned_usernames = await fn.get_banned_usernames(sqlalchemy_client)
         response = ", ".join(banned_usernames) if banned_usernames else "Нет забаненных пользователей"
         await client.send_message(entity=me, message=response, reply_to=event.message)
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^unban"))
     async def handle_unban(event: events.NewMessage.Event) -> None:
-        me = await fn.get_me_cashed(client, redis_client)
+        me = (await client.get_me()).id
         async with sessionmaker() as session:
             args = fn.parse_command(event.message.message)
             banned_usernames = await fn.get_banned_usernames(sqlalchemy_client)
@@ -60,7 +60,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^block$"))
     async def handle_block(event: events.NewMessage.Event) -> None:
-        me = await fn.get_me_cashed(client, redis_client)
+        me = (await client.get_me()).id
         async with sessionmaker() as session:
             not_banned_usernames = await fn.get_not_banned_usernames(sqlalchemy_client)
             for user in not_banned_usernames:

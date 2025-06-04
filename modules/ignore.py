@@ -13,7 +13,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^ignore"))
     async def handle_ignore(event: events.NewMessage.Event) -> None:
         async with sessionmaker() as session:
-            me = await fn.get_me_cashed(client, redis_client)
+            me = (await client.get_me()).id
             args = fn.parse_command(event.message.message)
             ignored_words = await fn.get_ignored_words(sqlalchemy_client, redis_client)
             for ignored_word in args:
@@ -29,7 +29,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^all ignore$"))
     async def handle_all_ignore(event: events.NewMessage.Event) -> None:
-        me = await fn.get_me_cashed(client, redis_client)
+        me = (await client.get_me()).id
         ignored_words = await fn.get_ignored_words(sqlalchemy_client, redis_client)
         response = ", ".join(ignored_words) if ignored_words else "Нет игнорируемых слов"
         await client.send_message(entity=me, message=response, reply_to=event.message)
@@ -37,7 +37,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^unignore"))
     async def handle_unignore(event: events.NewMessage.Event) -> None:
         async with sessionmaker() as session:
-            me = await fn.get_me_cashed(client, redis_client)
+            me = (await client.get_me()).id
             args = fn.parse_command(event.message.message)
             ignored_words = await fn.get_ignored_words(sqlalchemy_client, redis_client)
             for ignored_word in args:

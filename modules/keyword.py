@@ -13,7 +13,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^keyword"))
     async def handle_keyword(event: events.NewMessage.Event) -> None:
         async with sessionmaker() as session:
-            me = await fn.get_me_cashed(client, redis_client)
+            me = (await client.get_me()).id
             args = fn.parse_command(event.message.message)
             keywords = await fn.get_keywords(sqlalchemy_client, redis_client)
             for keyword in args:
@@ -25,7 +25,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^all keyword$"))
     async def handle_all_keyword(event: events.NewMessage.Event) -> None:
-        me = await fn.get_me_cashed(client, redis_client)
+        me = (await client.get_me()).id
         keywords = await fn.get_keywords(sqlalchemy_client, redis_client)
         response = ", ".join(keywords) if keywords else "Нет триггерных слов"
         await client.send_message(entity=me, message=response, reply_to=event.message)
@@ -33,7 +33,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^unkeyword"))
     async def handle_unkeyword(event: events.NewMessage.Event) -> None:
         async with sessionmaker() as session:
-            me = await fn.get_me_cashed(client, redis_client)
+            me = (await client.get_me()).id
             args = fn.parse_command(event.message.message)
             keywords = await fn.get_keywords(sqlalchemy_client, redis_client)
             for keyword in args:

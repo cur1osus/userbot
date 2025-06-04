@@ -13,7 +13,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^answer"))
     async def handle_answer(event: events.NewMessage.Event) -> None:
         async with sessionmaker() as session:
-            me = await fn.get_me_cashed(client, redis_client)
+            me = (await client.get_me()).id
             args = fn.parse_command(event.message.message, sep="\n")
             messages_to_answer = await fn.get_messages_to_answer(sqlalchemy_client)
             for message_to_answer in args:
@@ -33,7 +33,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^all answer$"))
     async def handle_all_answer(event: events.NewMessage.Event) -> None:
-        me = await fn.get_me_cashed(client, redis_client)
+        me = (await client.get_me()).id
         messages_to_answer = await fn.get_messages_to_answer(sqlalchemy_client)
         response = (
             fn.collect_in_text(
@@ -49,7 +49,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
     @client.on(events.NewMessage(outgoing=True, pattern=r"(?i)^unanswer"))
     async def handle_unanswer(event: events.NewMessage.Event) -> None:
         async with sessionmaker() as session:
-            me = await fn.get_me_cashed(client, redis_client)
+            me = (await client.get_me()).id
             counter_del = 0
             args = fn.parse_command(event.message.message, sep="\n")
             messages_to_answer = await fn.get_messages_to_answer(sqlalchemy_client)
