@@ -36,7 +36,7 @@ async def handling_difference_update_chanel(
     if not await fn.is_work(redis_client, sqlalchemy_client):
         logger.info("Анализ сообщений с канала остановлен")
         return
-    channels = await fn.get_monitoring_chat(sqlalchemy_client)
+    channels = await fn.get_monitoring_chat(sqlalchemy_client, redis_client)
     channels = map(int, channels)
     for channel in channels:
         channel_entity = await client.get_entity(channel)

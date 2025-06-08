@@ -12,7 +12,7 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
     @client.on(events.NewMessage())
     async def handle_new_message(event: events.NewMessage.Event) -> None:
-        chats = await fn.get_monitoring_chat(sqlalchemy_client)
+        chats = await fn.get_monitoring_chat(sqlalchemy_client, redis_client)
         if str(event.chat_id) not in chats:
             return
         if await redis_client.get(event.chat_id):
