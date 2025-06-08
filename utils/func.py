@@ -334,6 +334,7 @@ class Function:
         if await redis_client.get("is_work"):
             return True
         async with sqlalchemy_client.session_factory() as session:
-            r = await session.scalar(select(Bot.is_started))
+            bot_id = await redis_client.get("bot_id")
+            r = await session.scalar(select(Bot.is_started).where(Bot.id == bot_id))
             await redis_client.save("is_work", r, ttl)
             return r

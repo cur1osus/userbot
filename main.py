@@ -54,7 +54,6 @@ async def main() -> None:
         if not bot:
             logger.error(f"Бот {bot_phone} не найден в базе данных")
             return
-        await redis_client.save("bot_id", bot.id)
     try:
         client = TelegramClient(bot.path_session, bot.api_id, bot.api_hash)
         await client.connect()
@@ -67,6 +66,7 @@ async def main() -> None:
         logger.exception(f"Ошибка при инициализации клиента: {e}")
         return
     redis_client.id_bot = bot.api_id
+    await redis_client.save("bot_id", bot.id)
     # Регистрация модулей
     modules = [
         ping.register,  # Передаем sqlalchemy_client
