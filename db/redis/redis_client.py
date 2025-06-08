@@ -10,11 +10,11 @@ class RedisClient:
     """Класс для работы с Redis."""
 
     prefix: str = "userbot"
-    names_metadata: typing.ClassVar[list[str]] = ["user_id", "message_id", "chat_id"]
 
     def __init__(self, config: Config) -> None:
         self.config = config
         self.redis = None
+        self.id_bot = None
         self.logger = logging.getLogger(__name__)
         self.encoder = msgspec.json.Encoder()
         self.decoder = msgspec.json.Decoder()
@@ -40,9 +40,8 @@ class RedisClient:
             await self.redis.close()
             self.logger.info("Redis отключен")
 
-    @classmethod
-    def key(cls, key: str) -> str:
-        return f"{cls.prefix}:{key}"
+    def key(self, key: str) -> str:
+        return f"{self.prefix}:{self.id_bot}:{key}"
 
     async def save(self, key: str, value: dict, ttl: int = 864000) -> None:
         """
@@ -66,9 +65,7 @@ class RedisClient:
         :return: Десериализованные данные (словарь) или None, если ключ не найден.
         """
         data = await self.redis.get(self.key(key))
-        if data:
-            return self.decoder.decode(data)
-        return None
+        return self.decoder.decode(data) if data else None
 
     async def delete(self, key: int | str) -> int:
         return await self.redis.delete(self.key(key))

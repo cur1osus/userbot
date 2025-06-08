@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient) -> None:
-    if datetime.datetime.now().second % 20 == 0:  # noqa: DTZ005
+    if datetime.datetime.now().second == 0:  # noqa: DTZ005
         if not await redis_client.get("work"):
             logger.info("Отправка сообщения остановлена")
             return

@@ -7,7 +7,7 @@ from config.config import load_config
 from db.redis.redis_client import RedisClient
 from db.sqlalchemy.models import Bot
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
-from modules import answer, ban, chat, help, id, ignore, keyword, new_msg, ping, start, stop  # noqa: A004
+from modules import new_msg, ping
 from scheduler import Scheduler
 from sqlalchemy import select
 from telethon import TelegramClient
@@ -51,7 +51,7 @@ async def main() -> None:
 
     # Инициализация Telegram клиента
     async with sqlalchemy_client.session_factory() as session:  # type: ignore
-        bot: Bot = await session.scalar(select(Bot).where(Bot.name == bot_phone))
+        bot: Bot = await session.scalar(select(Bot).where(Bot.phone == bot_phone))
         if not bot:
             logger.error(f"Бот {bot_phone} не найден в базе данных")
             return
@@ -66,19 +66,10 @@ async def main() -> None:
     except Exception as e:
         logger.exception(f"Ошибка при инициализации клиента: {e}")
         return
+    redis_client.id_bot = bot.api_id
     # Регистрация модулей
     modules = [
         ping.register,  # Передаем sqlalchemy_client
-        id.register,
-        # restart.register,
-        lambda c: help.register(c, redis_client),
-        lambda c: stop.register(c, redis_client),
-        lambda c: start.register(c, redis_client, sqlalchemy_client),
-        lambda c: ban.register(c, sqlalchemy_client, redis_client),
-        lambda c: chat.register(c, sqlalchemy_client, redis_client),
-        lambda c: ignore.register(c, sqlalchemy_client, redis_client),
-        lambda c: keyword.register(c, sqlalchemy_client, redis_client),
-        lambda c: answer.register(c, sqlalchemy_client, redis_client),
         lambda c: new_msg.register(c, sqlalchemy_client, redis_client),
     ]
     for module in modules:

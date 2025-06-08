@@ -1,38 +1,39 @@
 import logging
 import random
 import re
-from collections.abc import Callable
 from typing import Any
 
 from db.redis.redis_client import RedisClient
-from db.sqlalchemy.models import BannedUser, IgnoredWord, Keyword, MessageToAnswer, MonitoringChat
-from db.sqlalchemy.models import User as UserDB
+from db.sqlalchemy.models import BannedUser, IgnoredWord, KeyWord, MessageToAnswer, MonitoringChat, UserAnalyzed
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from Levenshtein import distance as levenshtein_distance
 from sqlalchemy import select
 from telethon import TelegramClient, events
-from telethon.errors.rpcerrorlist import UsernameNotOccupiedError
 from telethon.tl.functions.channels import GetFullChannelRequest
-from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
 from telethon.tl.functions.updates import GetChannelDifferenceRequest
 from telethon.tl.types import (
     ChannelMessagesFilter,
+    DialogFilter,
     InputChannel,
     Message,
     MessageRange,
-    User,
+    InputPeerChat,
+    InputPeerChannel,
+    InputPeerUser,
 )
 from telethon.tl.types.updates import ChannelDifference, ChannelDifferenceEmpty, ChannelDifferenceTooLong
+from telethon.utils import get_display_name
+from telethon import functions
 
 logger = logging.getLogger(__name__)
 
 
 class Function:
     @staticmethod
-    async def get_closer_data_user(sqlalchemy_client: SQLAlchemyClient) -> UserDB | None:
+    async def get_closer_data_user(sqlalchemy_client: SQLAlchemyClient) -> UserAnalyzed | None:
         async with sqlalchemy_client.session_factory() as session:
             user = await session.scalar(
-                select(UserDB).where(UserDB.sended.is_(False)).order_by(UserDB.id.asc()).limit(1),
+                select(UserAnalyzed).where(UserAnalyzed.sended.is_(False)).order_by(UserAnalyzed.id.asc()).limit(1),
             )
 
             if not user:
@@ -42,7 +43,7 @@ class Function:
             return user
 
     @staticmethod
-    async def send_message_one(client: Any, user: User, ans: str) -> None:
+    async def send_message_two(client: Any, user: UserAnalyzed, ans: str) -> None:
         await client.send_message(entity=user.id_user, message=ans)
         await client.forward_messages(
             entity=user.id_user,
@@ -51,34 +52,18 @@ class Function:
         )
 
     @staticmethod
-    async def send_message_two(client: Any, user: UserDB, ans: str) -> None:
-        await client.forward_messages(
-            entity=user.id_user,
-            messages=int(user.message_id),
-            from_peer=int(user.chat_id),
-        )
-        await client.send_message(entity=user.id_user, message=ans)
-
-    @staticmethod
-    async def send_message_three(client: Any, user: UserDB, ans: str) -> None:
-        ans = f"{ans}\n\n{user.additional_message}"
-        await client.send_message(entity=user.id_user, message=ans)
-
-    @staticmethod
-    async def send_message_four(client: Any, user: UserDB, ans: str) -> None:
+    async def send_message_four(client: Any, user: UserAnalyzed, ans: str) -> None:
         ans = f"{user.additional_message}\n\n{ans}"
         await client.send_message(entity=user.id_user, message=ans)
 
     @staticmethod
-    async def send_message_random(client: Any, user: UserDB, ans: str) -> None:
+    async def send_message_random(client: Any, user: UserAnalyzed, ans: str) -> None:
         func = random.choices(
             population=[
-                Function.send_message_one,
                 Function.send_message_two,
-                Function.send_message_three,
                 Function.send_message_four,
             ],
-            weights=[0.15, 0.15, 0.35, 0.35],
+            weights=[0.10, 0.90],
         )[0]
 
         await func(client, user, ans)
@@ -86,36 +71,8 @@ class Function:
     @staticmethod
     async def reset_users_sended_status(sqlalchemy_client: SQLAlchemyClient) -> None:
         async with sqlalchemy_client.session_factory() as session:
-            await session.execute(select(UserDB).update().values(sended=False))
+            await session.execute(select(UserAnalyzed).update().values(sended=False))
             await session.commit()
-
-    @staticmethod
-    def collect_in_text(iter_: list[Any], func: Callable, sep: str = ", ") -> str | None:
-        if not iter_:
-            return None
-        if not func:
-            return sep.join(str(item) for item in iter_)
-        return sep.join(func(item) for item in iter_)
-
-    @staticmethod
-    def markdown_code_style(text: str) -> str:
-        return f"`{text}`"
-
-    @staticmethod
-    async def block_user(client: Any, user: User) -> None:
-        try:
-            await client(BlockRequest(user))
-            logger.info(f"Пользователь с username {user.username} был успешно заблокирован.")
-        except Exception as e:
-            logger.info(f"Произошла ошибка при блокировке пользователя: {e}")
-
-    @staticmethod
-    async def unblock_user(client: Any, user: User) -> None:
-        try:
-            await client(UnblockRequest(user))
-            logger.info(f"Пользователь с username {user.username} был успешно разблокирован.")
-        except UsernameNotOccupiedError as e:
-            logger.info(f"Произошла ошибка при разблокировке пользователя: {e}")
 
     @staticmethod
     async def parse_mention(text: str) -> str | None:
@@ -133,12 +90,6 @@ class Function:
         pattern = r"@[A-Za-z0-9_]{5,32}\b"
         match = re.search(pattern, text)
         return match[0][1:] if match else None
-
-    @staticmethod
-    async def extract_ids_message(event: events.NewMessage.Event) -> None:
-        from_chat = event.chat_id
-        message_id = event.message.id
-        return f"{from_chat}:{message_id}"
 
     @staticmethod
     async def normalize_set(items: set) -> set:
@@ -210,22 +161,6 @@ class Function:
         return False
 
     @staticmethod
-    async def get_me_cashed(client: Any, redis_client: RedisClient) -> int:
-        if r := await redis_client.get("me"):
-            return r
-        me: int = (await client.get_me()).id
-        await redis_client.save("me", me)
-        return me
-
-    @staticmethod
-    def parse_command(message: str, sep: str = ",") -> list[str]:
-        r = message.split(" ", 1)
-        if len(r) == 1:
-            return []
-        r = r[1]
-        return [r.strip() for r in r.split(sep) if r]
-
-    @staticmethod
     async def take_message_answer(redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient) -> str:
         if r := await redis_client.get("messages_to_answer"):
             return random.choice(r)
@@ -274,7 +209,7 @@ class Function:
         if cashed and (r := await redis_client.get("keywords")):
             return r
         async with sqlalchemy_client.session_factory() as session:
-            r = (await session.scalars(select(Keyword.word))).all()
+            r = (await session.scalars(select(KeyWord.word))).all()
             r = set(r)
             await redis_client.save("keywords", r, 60)
             return r
@@ -287,13 +222,13 @@ class Function:
     @staticmethod
     async def user_exist(id_user: int, sqlalchemy_client: SQLAlchemyClient) -> bool:
         async with sqlalchemy_client.session_factory() as session:
-            return bool(await session.scalar(select(UserDB).where(UserDB.id_user == id_user)))
+            return bool(await session.scalar(select(UserAnalyzed).where(UserAnalyzed.id_user == id_user)))
 
     @staticmethod
     async def add_user(sender: Any, event: events.NewMessage.Event, sqlalchemy_client: SQLAlchemyClient) -> None:
         message = event.message.message
         async with sqlalchemy_client.session_factory() as session:
-            user = UserDB(
+            user = UserAnalyzed(
                 id_user=sender.id,
                 message_id=event.message.id,
                 chat_id=event.chat_id,
@@ -308,7 +243,7 @@ class Function:
     async def add_user_v2(sender: Any, update: Message, sqlalchemy_client: SQLAlchemyClient) -> None:
         message = update.message
         async with sqlalchemy_client.session_factory() as session:
-            user = UserDB(
+            user = UserAnalyzed(
                 id_user=sender.id,
                 message_id=update.id,
                 chat_id=update.peer_id.channel_id,
@@ -380,3 +315,17 @@ class Function:
         except Exception as e:
             logger.exception(f"Ошибка при получении обновлений для канала {chat_id}: {e}")
             return []
+
+    @staticmethod
+    async def get_folder_chats(client: TelegramClient) -> list[dict]:
+        result = await client(functions.messages.GetDialogFiltersRequest())
+        folders = result.filters
+        for folder in folders:
+            if isinstance(folder, DialogFilter):
+                for peer in folder.include_peers:
+                    if isinstance(peer, InputPeerChat):
+                        logger.info(peer.chat_id)
+                    elif isinstance(peer, InputPeerChannel):
+                        logger.info(peer.channel_id)
+                    elif isinstance(peer, InputPeerUser):
+                        logger.info(peer.user_id)
