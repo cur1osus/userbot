@@ -4,26 +4,24 @@ import re
 from typing import Any
 
 from db.redis.redis_client import RedisClient
-from db.sqlalchemy.models import BannedUser, IgnoredWord, KeyWord, MessageToAnswer, MonitoringChat, UserAnalyzed
+from db.sqlalchemy.models import BannedUser, Bot, IgnoredWord, KeyWord, MessageToAnswer, MonitoringChat, UserAnalyzed
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from Levenshtein import distance as levenshtein_distance
 from sqlalchemy import select
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, functions
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.updates import GetChannelDifferenceRequest
 from telethon.tl.types import (
     ChannelMessagesFilter,
     DialogFilter,
     InputChannel,
+    InputPeerChannel,
+    InputPeerChat,
+    InputPeerUser,
     Message,
     MessageRange,
-    InputPeerChat,
-    InputPeerChannel,
-    InputPeerUser,
 )
 from telethon.tl.types.updates import ChannelDifference, ChannelDifferenceEmpty, ChannelDifferenceTooLong
-from telethon.utils import get_display_name
-from telethon import functions
 
 logger = logging.getLogger(__name__)
 
@@ -172,9 +170,10 @@ class Function:
             return random.choice(r)
 
     @staticmethod
-    async def get_monitoring_chat(sqlalchemy_client: SQLAlchemyClient) -> list[str]:
+    async def get_monitoring_chat(sqlalchemy_client: SQLAlchemyClient, redis_client: RedisClient) -> list[str]:
+        bot_id = await redis_client.get("bot_id")
         async with sqlalchemy_client.session_factory() as session:
-            return (await session.scalars(select(MonitoringChat.id_chat))).all()
+            return (await session.scalars(select(MonitoringChat.id_chat).where(MonitoringChat.bot_id == bot_id))).all()
 
     @staticmethod
     async def get_banned_usernames(sqlalchemy_client: SQLAlchemyClient) -> list[str]:
@@ -329,3 +328,12 @@ class Function:
                         logger.info(peer.channel_id)
                     elif isinstance(peer, InputPeerUser):
                         logger.info(peer.user_id)
+
+    @staticmethod
+    async def is_work(redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient, ttl: int = 60) -> bool:
+        if await redis_client.get("is_work"):
+            return True
+        async with sqlalchemy_client.session_factory() as session:
+            r = await session.scalar(select(Bot.is_started))
+            await redis_client.save("is_work", r, ttl)
+            return r

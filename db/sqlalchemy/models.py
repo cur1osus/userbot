@@ -10,7 +10,8 @@ from .base import Base
 class MonitoringChat(Base):
     __tablename__ = "monitoring_chats"
 
-    id_chat: Mapped[str] = mapped_column(String(50), unique=True)
+    bot_id: Mapped[int] = mapped_column()
+    id_chat: Mapped[str] = mapped_column(String(50))
 
 
 class KeyWord(Base):
@@ -34,7 +35,7 @@ class MessageToAnswer(Base):
 class BannedUser(Base):
     __tablename__ = "banned_users"
 
-    id_user: Mapped[int] = mapped_column(BigInteger, unique=True)
+    id_user: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=True)
     username: Mapped[str] = mapped_column(String(50), nullable=True)
     is_banned: Mapped[bool] = mapped_column(default=False)
 

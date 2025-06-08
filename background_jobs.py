@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient) -> None:
     if datetime.datetime.now().second == 0:  # noqa: DTZ005
-        if not await redis_client.get("work"):
+        if not await fn.is_work(redis_client, sqlalchemy_client):
             logger.info("Отправка сообщения остановлена")
             return
 
@@ -33,7 +33,7 @@ async def handling_difference_update_chanel(
     redis_client: RedisClient,
     sqlalchemy_client: SQLAlchemyClient,
 ) -> None:
-    if not await redis_client.get("work"):
+    if not await fn.is_work(redis_client, sqlalchemy_client):
         logger.info("Анализ сообщений с канала остановлен")
         return
     channels = await fn.get_monitoring_chat(sqlalchemy_client)
