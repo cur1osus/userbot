@@ -107,8 +107,8 @@ class Function:
         message: str,
         sqlalchemy_client: SQLAlchemyClient,
         redis_client: RedisClient,
-        threshold_word: int = 2,
-        threshold_sentence: float = 0.2,
+        threshold_word: int = 4,
+        threshold_sentence: float = 0.5,
     ) -> bool:
         # sourcery skip: assign-if-exp, boolean-if-exp-identity, reintroduce-else, remove-unnecessary-cast
         """
