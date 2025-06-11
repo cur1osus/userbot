@@ -20,8 +20,9 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
         msg_text = event.message.message
         sender: User = await event.get_sender()
-
-        if not await fn.is_acceptable_message(msg_text, sqlalchemy_client, redis_client):
+        triggers = fn.get_keywords(sqlalchemy_client, redis_client, cashed=True)
+        excludes = fn.get_ignored_words(sqlalchemy_client, redis_client, cashed=True)
+        if not await fn.is_acceptable_message(msg_text, triggers, excludes):
             return
 
         banned_users = await fn.get_banned_usernames(sqlalchemy_client)

@@ -105,10 +105,10 @@ class Function:
     @staticmethod
     async def is_acceptable_message(
         message: str,
-        sqlalchemy_client: SQLAlchemyClient,
-        redis_client: RedisClient,
+        triggers: set,
+        excludes: set,
         threshold_word: int = 4,
-        threshold_sentence: float = 0.5,
+        threshold_sentence: float = 0.25,
     ) -> bool:
         # sourcery skip: assign-if-exp, boolean-if-exp-identity, reintroduce-else, remove-unnecessary-cast
         """
@@ -122,19 +122,22 @@ class Function:
         :return: True, если сообщение подходит, иначе False.
         """
         # Приведение текста к единому формату
-        triggers = await Function.normalize_set(
-            await Function.get_keywords(sqlalchemy_client, redis_client, cashed=True),
-        )
-        excludes = await Function.normalize_set(
-            await Function.get_ignored_words(sqlalchemy_client, redis_client, cashed=True),
-        )
+        triggers = await Function.normalize_set(triggers)
+        excludes = await Function.normalize_set(excludes)
+        logger.info(f"{triggers=}, {excludes=}", end="\n\n")
         formatted_message = re.sub(r"[^\w\s]", "", message.lower())
+        logger.info(f"{formatted_message=}", end="\n\n")
         words = formatted_message.split()
-        sentences = [sentence.strip() for sentence in re.split(r"[.!?]", formatted_message) if sentence.strip()]
+        sentences = [sentence.strip() for sentence in re.split(r"[.!?\n]", formatted_message) if sentence.strip()]
+        logger.info(f"{words=}, {sentences=}", end="\n\n")
 
         def is_similar_word(word: str, word_set: set) -> bool:
             """Проверяет, есть ли похожее слово в наборе с учетом расстояния Левенштейна."""
-            return any(levenshtein_distance(word, target_word) <= threshold_word for target_word in word_set)
+            return any(
+                levenshtein_distance(word, target_word) <= threshold_word
+                for target_word in word_set
+                if len(target_word.split()) == 1
+            )
 
         def is_similar_sentence(sentence: str, sentence_set: set) -> bool:
             """Проверяет, есть ли похожее предложение в наборе с учетом относительного расстояния."""
@@ -142,6 +145,7 @@ class Function:
                 levenshtein_distance(sentence, target_sentence) / max(len(sentence), len(target_sentence))
                 <= threshold_sentence
                 for target_sentence in sentence_set
+                if len(target_sentence.split()) > 1
             )
 
         # Проверяем исключающие слова и предложения

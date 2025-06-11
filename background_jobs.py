@@ -47,7 +47,9 @@ async def handling_difference_update_chanel(
             continue
         for update in updates:
             msg_text = update.message
-            if not await fn.is_acceptable_message(msg_text, sqlalchemy_client, redis_client):
+            triggers = fn.get_keywords(sqlalchemy_client, redis_client, cashed=True)
+            excludes = fn.get_ignored_words(sqlalchemy_client, redis_client, cashed=True)
+            if not await fn.is_acceptable_message(msg_text, triggers, excludes):
                 return
             mention = await fn.parse_mention(update.message)
             if not mention:
