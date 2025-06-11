@@ -1,6 +1,6 @@
 import datetime
 import logging
-from typing import Any
+from typing import Any, Final
 
 from db.redis.redis_client import RedisClient
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
@@ -8,10 +8,13 @@ from telethon import TelegramClient
 from utils.func import Function as fn  # noqa: N813
 
 logger = logging.getLogger(__name__)
+minute: Final[int] = 60
 
 
 async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient) -> None:
-    if datetime.datetime.now().second == 0:  # noqa: DTZ005
+    users_per_minute = await fn.get_users_per_minute(sqlalchemy_client, redis_client, cashed=True)
+    delay = minute // users_per_minute
+    if datetime.datetime.now().second % delay == 0:  # noqa: DTZ005
         if not await fn.is_work(redis_client, sqlalchemy_client):
             logger.info("Отправка сообщения остановлена")
             return

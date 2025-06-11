@@ -56,6 +56,7 @@ class UserManager(Base):
 
     id_user: Mapped[int] = mapped_column(BigInteger, unique=True)
     username: Mapped[str] = mapped_column(String(50), nullable=True)
+    users_per_minute: Mapped[int] = mapped_column(default=1)
 
 
 class Bot(Base):

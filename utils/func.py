@@ -4,7 +4,16 @@ import re
 from typing import Any
 
 from db.redis.redis_client import RedisClient
-from db.sqlalchemy.models import BannedUser, Bot, IgnoredWord, KeyWord, MessageToAnswer, MonitoringChat, UserAnalyzed
+from db.sqlalchemy.models import (
+    BannedUser,
+    Bot,
+    IgnoredWord,
+    KeyWord,
+    MessageToAnswer,
+    MonitoringChat,
+    UserAnalyzed,
+    UserManager,
+)
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from Levenshtein import distance as levenshtein_distance
 from sqlalchemy import select
@@ -15,8 +24,6 @@ from telethon.tl.types import (
     ChannelMessagesFilter,
     DialogFilter,
     InputChannel,
-    InputPeerChannel,
-    InputPeerChat,
     InputPeerUser,
     Message,
     MessageRange,
@@ -223,6 +230,20 @@ class Function:
             return (await session.scalars(select(MessageToAnswer.sentence))).all()
 
     @staticmethod
+    async def get_users_per_minute(
+        sqlalchemy_client: SQLAlchemyClient,
+        redis_client: RedisClient,
+        cashed: bool = False,
+    ) -> int:
+        if cashed and (r := await redis_client.get("users_per_minute")):
+            return r
+        async with sqlalchemy_client.session_factory() as session:
+            r = (await session.scalars(select(UserManager.users_per_minute))).all()
+            r = max(r)
+            await redis_client.save("users_per_minute", r, 60)
+            return r
+
+    @staticmethod
     async def user_exist(id_user: int, sqlalchemy_client: SQLAlchemyClient) -> bool:
         async with sqlalchemy_client.session_factory() as session:
             return bool(await session.scalar(select(UserAnalyzed).where(UserAnalyzed.id_user == id_user)))
@@ -320,18 +341,27 @@ class Function:
             return []
 
     @staticmethod
-    async def get_folder_chats(client: TelegramClient) -> list[dict]:
+    async def get_folder_chats(client: TelegramClient, name: str) -> list[dict] | None:
         result = await client(functions.messages.GetDialogFiltersRequest())
+        users = []
         folders = result.filters
         for folder in folders:
-            if isinstance(folder, DialogFilter):
-                for peer in folder.include_peers:
-                    if isinstance(peer, InputPeerChat):
-                        logger.info(peer.chat_id)
-                    elif isinstance(peer, InputPeerChannel):
-                        logger.info(peer.channel_id)
-                    elif isinstance(peer, InputPeerUser):
-                        logger.info(peer.user_id)
+            if not isinstance(folder, DialogFilter) or folder.title.text != name:
+                continue
+            for peer in folder.include_peers:
+                if not isinstance(peer, InputPeerUser):
+                    continue
+                user = await client.get_entity(peer.user_id)
+                users.append(
+                    {
+                        "id": user.id,
+                        "username": user.username,
+                        "first_name": user.first_name,
+                        "last_name": user.last_name,
+                        "phone": user.phone,
+                    },
+                )
+        return users
 
     @staticmethod
     async def is_work(redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient, ttl: int = 60) -> bool:
