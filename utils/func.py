@@ -131,12 +131,12 @@ class Function:
         # Приведение текста к единому формату
         triggers = await Function.normalize_set(triggers)
         excludes = await Function.normalize_set(excludes)
-        logger.info(f"{triggers=}, {excludes=}", end="\n\n")
+        logger.info(f"{triggers=}, {excludes=}")
         formatted_message = re.sub(r"[^\w\s]", "", message.lower())
-        logger.info(f"{formatted_message=}", end="\n\n")
+        logger.info(f"{formatted_message=}")
         words = formatted_message.split()
         sentences = [sentence.strip() for sentence in re.split(r"[.!?\n]", formatted_message) if sentence.strip()]
-        logger.info(f"{words=}, {sentences=}", end="\n\n")
+        logger.info(f"{words=}, {sentences=}")
 
         def is_similar_word(word: str, word_set: set) -> bool:
             """Проверяет, есть ли похожее слово в наборе с учетом расстояния Левенштейна."""
