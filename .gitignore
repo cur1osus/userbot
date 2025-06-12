@@ -13,3 +13,4 @@ wheels/
 *.db
 .mypy_cache
 .env
+test.py

@@ -15,7 +15,6 @@ from db.sqlalchemy.models import (
     UserManager,
 )
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
-from Levenshtein import distance as levenshtein_distance
 from sqlalchemy import select
 from telethon import TelegramClient, events, functions
 from telethon.tl.functions.channels import GetFullChannelRequest
@@ -96,78 +95,84 @@ class Function:
         match = re.search(pattern, text)
         return match[0][1:] if match else None
 
-    @staticmethod
-    async def normalize_set(items: set) -> set:
-        """
-        Приводит набор слов или предложений к единому стандарту.
-        :param items: Набор слов или предложений.
-        :return: Нормализованный набор.
-        """
-        normalized = set()
-        for item in items:
-            if normalized_item := re.sub(r"[^\w\s]", "", item.lower()).strip():
-                normalized.add(normalized_item)
-        return normalized
+    # @staticmethod
+    # async def normalize_set(items: set) -> set:
+    #     """
+    #     Приводит набор слов или предложений к единому стандарту.
+    #     :param items: Набор слов или предложений.
+    #     :return: Нормализованный набор.
+    #     """
+    #     normalized = set()
+    #     for item in items:
+    #         if normalized_item := re.sub(r"[^\w\s]", "", item.lower()).strip():
+    #             normalized.add(normalized_item)
+    #     return normalized
 
     @staticmethod
-    async def is_acceptable_message(
-        message: str,
-        triggers: set,
-        excludes: set,
-        threshold_word: int = 2,
-        threshold_sentence: float = 0.20,
-    ) -> bool:
-        # sourcery skip: assign-if-exp, boolean-if-exp-identity, reintroduce-else, remove-unnecessary-cast
-        """
-        Проверяет, подходит ли сообщение, используя слова и предложения как триггеры/исключения.
+    async def is_acceptable_message(message: str, triggers: set, excludes: set) -> bool:
+        message = message.lower()
+        r = any(keyword in message for keyword in triggers)
+        return r and all(ignored_word not in message for ignored_word in excludes)
 
-        :param message: Строка сообщения.
-        :param triggers: Множество слов или предложений-триггеров.
-        :param excludes: Множество слов или предложений-исключений.
-        :param threshold_word: Порог расстояния Левенштейна для слов.
-        :param threshold_sentence: Максимальная доля ошибок для предложений.
-        :return: True, если сообщение подходит, иначе False.
-        """
-        # Приведение текста к единому формату
-        triggers = await Function.normalize_set(triggers)
-        excludes = await Function.normalize_set(excludes)
-        logger.info(f"{triggers=}, {excludes=}")
-        formatted_message = re.sub(r"[^\w\s]", "", message.lower())
-        logger.info(f"{formatted_message=}")
-        words = formatted_message.split()
-        sentences = [sentence.strip() for sentence in re.split(r"[.!?\n]", formatted_message) if sentence.strip()]
-        logger.info(f"{words=}, {sentences=}")
+    # @staticmethod
+    # async def is_acceptable_message(
+    #     message: str,
+    #     triggers: set,
+    #     excludes: set,
+    #     threshold_word: int = 2,
+    #     threshold_sentence: float = 0.20,
+    # ) -> bool:
+    #     # sourcery skip: assign-if-exp, boolean-if-exp-identity, reintroduce-else, remove-unnecessary-cast
+    #     """
+    #     Проверяет, подходит ли сообщение, используя слова и предложения как триггеры/исключения.
 
-        def is_similar_word(word: str, word_set: set) -> bool:
-            """Проверяет, есть ли похожее слово в наборе с учетом расстояния Левенштейна."""
-            return any(
-                levenshtein_distance(word, target_word) <= threshold_word
-                for target_word in word_set
-                if len(target_word.split()) == 1
-            )
+    #     :param message: Строка сообщения.
+    #     :param triggers: Множество слов или предложений-триггеров.
+    #     :param excludes: Множество слов или предложений-исключений.
+    #     :param threshold_word: Порог расстояния Левенштейна для слов.
+    #     :param threshold_sentence: Максимальная доля ошибок для предложений.
+    #     :return: True, если сообщение подходит, иначе False.
+    #     """
+    #     # Приведение текста к единому формату
+    #     triggers = await Function.normalize_set(triggers)
+    #     excludes = await Function.normalize_set(excludes)
+    #     logger.info(f"{triggers=}, {excludes=}")
+    #     formatted_message = re.sub(r"[^\w\s]", "", message.lower())
+    #     logger.info(f"{formatted_message=}")
+    #     words = formatted_message.split()
+    #     sentences = [sentence.strip() for sentence in re.split(r"[.!?\n]", formatted_message) if sentence.strip()]
+    #     logger.info(f"{words=}, {sentences=}")
 
-        def is_similar_sentence(sentence: str, sentence_set: set) -> bool:
-            """Проверяет, есть ли похожее предложение в наборе с учетом относительного расстояния."""
-            return any(
-                levenshtein_distance(sentence, target_sentence) / max(len(sentence), len(target_sentence))
-                <= threshold_sentence
-                for target_sentence in sentence_set
-                if len(target_sentence.split()) > 1
-            )
+    #     def is_similar_word(word: str, word_set: set) -> bool:
+    #         """Проверяет, есть ли похожее слово в наборе с учетом расстояния Левенштейна."""
+    #         return any(
+    #             levenshtein_distance(word, target_word) <= threshold_word
+    #             for target_word in word_set
+    #             if len(target_word.split()) == 1
+    #         )
 
-        # Проверяем исключающие слова и предложения
-        if any(is_similar_word(word, excludes) for word in words) or any(
-            is_similar_sentence(sentence, excludes) for sentence in sentences
-        ):
-            return False
+    #     def is_similar_sentence(sentence: str, sentence_set: set) -> bool:
+    #         """Проверяет, есть ли похожее предложение в наборе с учетом относительного расстояния."""
+    #         return any(
+    #             levenshtein_distance(sentence, target_sentence) / max(len(sentence), len(target_sentence))
+    #             <= threshold_sentence
+    #             for target_sentence in sentence_set
+    #             if len(target_sentence.split()) > 1
+    #         )
 
-        # Проверяем триггеры в словах и предложениях
-        if any(is_similar_word(word, triggers) for word in words) or any(  # noqa: SIM103
-            is_similar_sentence(sentence, triggers) for sentence in sentences
-        ):
-            return True
+    #     # Проверяем исключающие слова и предложения
+    #     if any(is_similar_word(word, excludes) for word in words) or any(
+    #         is_similar_sentence(sentence, excludes) for sentence in sentences
+    #     ):
+    #         return False
 
-        return False
+    #     # Проверяем триггеры в словах и предложениях
+    #     if any(is_similar_word(word, triggers) for word in words) or any(
+    #         is_similar_sentence(sentence, triggers) for sentence in sentences
+    #     ):
+    #         return True
+
+    #     return False
 
     @staticmethod
     async def take_message_answer(redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient) -> str:
