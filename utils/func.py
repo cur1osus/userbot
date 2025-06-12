@@ -114,8 +114,8 @@ class Function:
         message: str,
         triggers: set,
         excludes: set,
-        threshold_word: int = 4,
-        threshold_sentence: float = 0.25,
+        threshold_word: int = 2,
+        threshold_sentence: float = 0.20,
     ) -> bool:
         # sourcery skip: assign-if-exp, boolean-if-exp-identity, reintroduce-else, remove-unnecessary-cast
         """
