@@ -110,7 +110,9 @@ class Function:
 
     @staticmethod
     async def is_acceptable_message(message: str, triggers: set, excludes: set) -> bool:
-        message = message.lower()
+        message = message.lower().replace("\n", " ")
+        triggers = {trigger.lower() for trigger in triggers}
+        excludes = {exclude.lower() for exclude in excludes}
         r = any(keyword in message for keyword in triggers)
         return r and all(ignored_word not in message for ignored_word in excludes)
 
