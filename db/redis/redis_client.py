@@ -1,5 +1,4 @@
 import logging
-import typing
 
 import msgspec
 import redis.asyncio as redis

@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import random
 import re
@@ -15,7 +16,8 @@ from db.sqlalchemy.models import (
     UserManager,
 )
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
-from sqlalchemy import select
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient, events, functions
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.updates import GetChannelDifferenceRequest
@@ -369,6 +371,23 @@ class Function:
                     },
                 )
         return users
+
+    @staticmethod
+    async def update_chat_title(client: TelegramClient, session: AsyncSession, bot_id: int) -> str:
+        chats = await session.scalars(
+            select(MonitoringChat).where(and_(MonitoringChat.bot_id == bot_id, MonitoringChat.title.is_(None))),
+        )
+        for chat in chats:
+            with contextlib.suppress(Exception):
+                chat_ = await client.get_entity(int(chat.id_chat))
+                chat.title = chat_.title
+
+    @staticmethod
+    async def update_me_name(client: TelegramClient, session: AsyncSession, bot_id: int) -> str:
+        me = await session.get(Bot, bot_id)
+        with contextlib.suppress(Exception):
+            me_ = await client.get_me()
+            me.name = me_.first_name
 
     @staticmethod
     async def is_work(redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient, ttl: int = 60) -> bool:

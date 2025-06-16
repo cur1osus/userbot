@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import logging
 
-from background_jobs import handling_difference_update_chanel, send_message
+from background_jobs import handling_difference_update_chanel, send_message, execute_jobs
 from config.config import load_config
 from db.redis.redis_client import RedisClient
 from db.sqlalchemy.models import Bot
@@ -89,6 +89,12 @@ async def main() -> None:
     )
     scheduler.every(10).seconds.do(
         handling_difference_update_chanel,
+        client=client,
+        redis_client=redis_client,
+        sqlalchemy_client=sqlalchemy_client,
+    )
+    scheduler.every(5).seconds.do(
+        execute_jobs,
         client=client,
         redis_client=redis_client,
         sqlalchemy_client=sqlalchemy_client,

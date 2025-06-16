@@ -3,6 +3,8 @@ from sqlalchemy import (
     String,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.mysql import BLOB
+from enum import Enum
 
 from .base import Base
 
@@ -12,6 +14,7 @@ class MonitoringChat(Base):
 
     bot_id: Mapped[int] = mapped_column()
     id_chat: Mapped[str] = mapped_column(String(50))
+    title: Mapped[str] = mapped_column(String(200), nullable=True)
 
 
 class KeyWord(Base):
@@ -68,3 +71,17 @@ class Bot(Base):
     api_hash: Mapped[str] = mapped_column(String(100))
     path_session: Mapped[str] = mapped_column(String(100))
     is_started: Mapped[bool] = mapped_column(default=False)
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    task: Mapped[str] = mapped_column(String(50))
+    bot_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    answer: Mapped[int] = mapped_column(BLOB, nullable=True)
+
+
+class JobName(Enum):
+    processed_users = "processed_users"
+    get_chat_title = "get_chat_title"
+    get_me_name = "get_me_name"

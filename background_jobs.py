@@ -2,8 +2,11 @@ import datetime
 import logging
 from typing import Any, Final
 
+import msgpack
 from db.redis.redis_client import RedisClient
+from db.sqlalchemy.models import Job, JobName
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
+from sqlalchemy import select
 from telethon import TelegramClient
 from utils.func import Function as fn  # noqa: N813
 
@@ -76,3 +79,34 @@ async def handling_difference_update_chanel(
 
             logger.info(f"Записал на отработку человека с этого канала: {channel_entity.title}")
             await fn.add_user_v2(sender, update, sqlalchemy_client)
+
+
+task_func = {
+    JobName.processed_users: fn.get_folder_chats,
+    JobName.get_chat_title: fn.update_chat_title,
+    JobName.get_me_name: fn.update_me_name,
+}
+
+
+async def execute_jobs(
+    client: TelegramClient,
+    redis_client: RedisClient,
+    sqlalchemy_client: SQLAlchemyClient,
+) -> None:  # sourcery skip: for-index-underscore
+    async with sqlalchemy_client.session_factory() as session:
+        jobs: list[Job] = await session.scalars(
+            select(Job).where(Job.answer.is_(None)),
+        )
+        for job in jobs:
+            if job.task == JobName.processed_users.value:
+                r = await task_func[JobName.processed_users](client, "🧠")
+                if not r:
+                    r = "В папке пусто"
+                job.answer = msgpack.packb(r)
+            elif job.task == JobName.get_chat_title.value:
+                await task_func[JobName.get_chat_title](client, session, job.bot_id)
+                await session.delete(job)
+            elif job.task == JobName.get_me_name.value:
+                await task_func[JobName.get_me_name](client, session, job.bot_id)
+                await session.delete(job)
+        await session.commit()
