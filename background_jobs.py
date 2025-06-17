@@ -45,7 +45,7 @@ async def handling_difference_update_chanel(
     channels = await fn.get_monitoring_chat(sqlalchemy_client, redis_client)
     channels = map(int, channels)
     for channel in channels:
-        channel_entity = await client.get_entity(channel)
+        channel_entity = await fn.safe_get_entity(client, channel)
         if not hasattr(channel_entity, "broadcast"):
             continue
         updates = await fn.get_difference_update_channel(client, channel, redis_client)
@@ -62,10 +62,8 @@ async def handling_difference_update_chanel(
             if not mention:
                 logger.info(f"Сообщение не содержит упоминания: {msg_text}")
                 return
-            try:
-                sender = await client.get_entity(mention)
-            except ValueError as e:
-                logger.exception(f"Error fetching entity: {e}")
+            sender = await fn.safe_get_entity(client, mention)
+            if not sender:
                 return
 
             banned_users = await fn.get_banned_usernames(sqlalchemy_client)

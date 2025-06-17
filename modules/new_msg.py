@@ -32,7 +32,9 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
         if await fn.user_exist(sender.id, sqlalchemy_client):
             return
 
-        chat = await client.get_entity(event.chat_id)
+        chat = await fn.safe_get_entity(client, event.chat_id)
+        if not chat:
+            return
         if isinstance(chat, User):
             logger.info(f"Записал на отработку человека с этого юзера: {sender.id} {sender.username}")
         if isinstance(chat, Chat):

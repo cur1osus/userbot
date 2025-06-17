@@ -296,7 +296,7 @@ class Function:
         """Получение обновлений для канала, используя GetChannelDifferenceRequest."""
         try:
             # Получение сущности канала
-            channel = await client.get_entity(chat_id)
+            channel = await Function.safe_get_entity(client, chat_id)
             input_channel = InputChannel(channel.id, channel.access_hash)
 
             # Получение или инициализация pts из базы данных
@@ -350,6 +350,27 @@ class Function:
             return []
 
     @staticmethod
+    async def safe_get_entity(client: TelegramClient, peer_id: int) -> Any | None:
+        try:
+            # Сначала пробуем получить пользователя напрямую
+            return await client.get_entity(peer_id)
+        except ValueError:
+            logger.info(f"Пользователь {peer_id} не найден в кэше, обновляем диалоги...")
+
+            try:
+                # Обновляем кэш диалогов
+                await client.get_dialogs()
+
+                # Пробуем снова после обновления кэша
+                return await client.get_entity(peer_id)
+            except ValueError:
+                logger.info(f"Пользователь {peer_id} всё ещё недоступен после обновления кэша")
+                return None
+            except Exception as e:
+                logger.info(f"Ошибка при получении пользователя {peer_id}: {e}")
+                return None
+
+    @staticmethod
     async def get_folder_chats(client: TelegramClient, name: str) -> list[dict] | None:
         result = await client(functions.messages.GetDialogFiltersRequest())
         users = []
@@ -360,7 +381,9 @@ class Function:
             for peer in folder.include_peers:
                 if not isinstance(peer, InputPeerUser):
                     continue
-                user = await client.get_entity(peer.user_id)
+                user = await Function.safe_get_entity(client, peer.user_id)
+                if not user:
+                    continue
                 users.append(
                     {
                         "id": user.id,
@@ -378,9 +401,11 @@ class Function:
             select(MonitoringChat).where(and_(MonitoringChat.bot_id == bot_id, MonitoringChat.title.is_(None))),
         )
         for chat in chats:
-            with contextlib.suppress(Exception):
-                chat_ = await client.get_entity(int(chat.id_chat))
-                chat.title = chat_.title
+            chat_ = await Function.safe_get_entity(client, int(chat.id_chat))
+
+            if not chat_:
+                continue
+            chat.title = chat_.title
 
     @staticmethod
     async def update_me_name(client: TelegramClient, session: AsyncSession, bot_id: int) -> str:
