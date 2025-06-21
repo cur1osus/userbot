@@ -360,6 +360,7 @@ class Function:
             try:
                 # Обновляем кэш диалогов
                 await client.get_dialogs()
+                await client.catch_up()
 
                 # Пробуем снова после обновления кэша
                 return await client.get_entity(peer_id)
