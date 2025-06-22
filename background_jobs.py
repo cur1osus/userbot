@@ -97,9 +97,7 @@ async def execute_jobs(
         )
         for job in jobs:
             if job.task == JobName.processed_users.value:
-                r = await task_func[JobName.processed_users](client, "🧠")
-                if not r:
-                    r = "В папке пусто"
+                r = await task_func[JobName.processed_users](client, "🧠") or "В папке пусто"
                 job.answer = msgpack.packb(r)
             elif job.task == JobName.get_chat_title.value:
                 await task_func[JobName.get_chat_title](client, session, job.bot_id)

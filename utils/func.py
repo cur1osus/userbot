@@ -379,7 +379,7 @@ class Function:
         for folder in folders:
             if not isinstance(folder, DialogFilter) or folder.title.text != name:
                 continue
-            for peer in folder.include_peers:
+            for peer in folder.pinned_peers:
                 if not isinstance(peer, InputPeerUser):
                     continue
                 user = await Function.safe_get_entity(client, peer.user_id)
