@@ -372,13 +372,14 @@ class Function:
                 return None
 
     @staticmethod
-    async def get_folder_chats(client: TelegramClient, name: str) -> list[dict] | None:
+    async def get_folders_chat(client: TelegramClient) -> list[dict] | None:
         result = await client(functions.messages.GetDialogFiltersRequest())
-        users = []
         folders = result.filters
+        f = []
         for folder in folders:
-            if not isinstance(folder, DialogFilter) or folder.title.text != name:
+            if not isinstance(folder, DialogFilter):
                 continue
+            users = []
             for peer in folder.pinned_peers:
                 if not isinstance(peer, InputPeerUser):
                     continue
@@ -394,7 +395,8 @@ class Function:
                         "phone": user.phone,
                     },
                 )
-        return users
+            f.append([folder.title.text, users])
+        return f
 
     @staticmethod
     async def update_chat_title(client: TelegramClient, session: AsyncSession, bot_id: int) -> str:

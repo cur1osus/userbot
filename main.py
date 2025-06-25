@@ -93,7 +93,7 @@ async def main() -> None:
         redis_client=redis_client,
         sqlalchemy_client=sqlalchemy_client,
     )
-    scheduler.every(5).seconds.do(
+    scheduler.every(1).seconds.do(
         execute_jobs,
         client=client,
         redis_client=redis_client,

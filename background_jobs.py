@@ -80,7 +80,7 @@ async def handling_difference_update_chanel(
 
 
 task_func = {
-    JobName.processed_users: fn.get_folder_chats,
+    JobName.processed_users: fn.get_folders_chat,
     JobName.get_chat_title: fn.update_chat_title,
     JobName.get_me_name: fn.update_me_name,
 }
@@ -97,7 +97,7 @@ async def execute_jobs(
         )
         for job in jobs:
             if job.task == JobName.processed_users.value:
-                r = await task_func[JobName.processed_users](client, "🧠") or "В папке пусто"
+                r = await task_func[JobName.processed_users](client)
                 job.answer = msgpack.packb(r)
             elif job.task == JobName.get_chat_title.value:
                 await task_func[JobName.get_chat_title](client, session, job.bot_id)
