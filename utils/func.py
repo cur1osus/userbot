@@ -373,6 +373,7 @@ class Function:
 
     @staticmethod
     async def get_folders_chat(client: TelegramClient) -> list[dict] | None:
+        await client.catch_up()
         result = await client(functions.messages.GetDialogFiltersRequest())
         folders = result.filters
         f = []
