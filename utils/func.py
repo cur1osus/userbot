@@ -15,38 +15,41 @@ from db.sqlalchemy.models import (
     UserAnalyzed,
     UserManager,
 )
-from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import TelegramClient, events, functions
-from telethon.tl.functions.channels import GetFullChannelRequest
-from telethon.tl.functions.updates import GetChannelDifferenceRequest
-from telethon.tl.types import (
+from telethon import TelegramClient, events, functions  # type: ignore
+from telethon.tl.functions.channels import GetFullChannelRequest  # type: ignore
+from telethon.tl.functions.updates import GetChannelDifferenceRequest  # type: ignore
+from telethon.tl.types import (  # type: ignore
     ChannelMessagesFilter,
     DialogFilter,
     InputChannel,
-    InputPeerUser,
     Message,
     MessageRange,
 )
-from telethon.tl.types.updates import ChannelDifference, ChannelDifferenceEmpty, ChannelDifferenceTooLong
+from telethon.tl.types.updates import (  # type: ignore
+    ChannelDifference,
+    ChannelDifferenceEmpty,
+    ChannelDifferenceTooLong,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class Function:
     @staticmethod
-    async def get_closer_data_user(sqlalchemy_client: SQLAlchemyClient) -> UserAnalyzed | None:
-        async with sqlalchemy_client.session_factory() as session:
-            user = await session.scalar(
-                select(UserAnalyzed).where(UserAnalyzed.sended.is_(False)).order_by(UserAnalyzed.id.asc()).limit(1),
-            )
+    async def get_closer_data_user(
+        session: AsyncSession,
+    ) -> UserAnalyzed | None:
+        user = await session.scalar(
+            select(UserAnalyzed).where(UserAnalyzed.sended.is_(False)).order_by(UserAnalyzed.id.asc()).limit(1),
+        )
 
-            if not user:
-                return None
-            user.sended = True
-            await session.commit()
-            return user
+        if not user:
+            return None
+        user.sended = True
+        await session.commit()
+        return user
 
     @staticmethod
     async def send_message_two(client: Any, user: UserAnalyzed, ans: str) -> None:
@@ -75,12 +78,6 @@ class Function:
         await func(client, user, ans)
 
     @staticmethod
-    async def reset_users_sended_status(sqlalchemy_client: SQLAlchemyClient) -> None:
-        async with sqlalchemy_client.session_factory() as session:
-            await session.execute(select(UserAnalyzed).update().values(sended=False))
-            await session.commit()
-
-    @staticmethod
     async def parse_mention(text: str) -> str | None:
         """
         Извлекает username Telegram из текста.
@@ -97,206 +94,164 @@ class Function:
         match = re.search(pattern, text)
         return match[0][1:] if match else None
 
-    # @staticmethod
-    # async def normalize_set(items: set) -> set:
-    #     """
-    #     Приводит набор слов или предложений к единому стандарту.
-    #     :param items: Набор слов или предложений.
-    #     :return: Нормализованный набор.
-    #     """
-    #     normalized = set()
-    #     for item in items:
-    #         if normalized_item := re.sub(r"[^\w\s]", "", item.lower()).strip():
-    #             normalized.add(normalized_item)
-    #     return normalized
-
     @staticmethod
-    async def is_acceptable_message(message: str, triggers: set, excludes: set) -> bool:
+    async def is_acceptable_message(message: str, triggers: set[str], excludes: set[str]) -> bool:
         message = message.lower().replace("\n", " ")
         triggers = {trigger.lower() for trigger in triggers}
         excludes = {exclude.lower() for exclude in excludes}
         r = any(keyword in message for keyword in triggers)
         return r and all(ignored_word not in message for ignored_word in excludes)
 
-    # @staticmethod
-    # async def is_acceptable_message(
-    #     message: str,
-    #     triggers: set,
-    #     excludes: set,
-    #     threshold_word: int = 2,
-    #     threshold_sentence: float = 0.20,
-    # ) -> bool:
-    #     # sourcery skip: assign-if-exp, boolean-if-exp-identity, reintroduce-else, remove-unnecessary-cast
-    #     """
-    #     Проверяет, подходит ли сообщение, используя слова и предложения как триггеры/исключения.
-
-    #     :param message: Строка сообщения.
-    #     :param triggers: Множество слов или предложений-триггеров.
-    #     :param excludes: Множество слов или предложений-исключений.
-    #     :param threshold_word: Порог расстояния Левенштейна для слов.
-    #     :param threshold_sentence: Максимальная доля ошибок для предложений.
-    #     :return: True, если сообщение подходит, иначе False.
-    #     """
-    #     # Приведение текста к единому формату
-    #     triggers = await Function.normalize_set(triggers)
-    #     excludes = await Function.normalize_set(excludes)
-    #     logger.info(f"{triggers=}, {excludes=}")
-    #     formatted_message = re.sub(r"[^\w\s]", "", message.lower())
-    #     logger.info(f"{formatted_message=}")
-    #     words = formatted_message.split()
-    #     sentences = [sentence.strip() for sentence in re.split(r"[.!?\n]", formatted_message) if sentence.strip()]
-    #     logger.info(f"{words=}, {sentences=}")
-
-    #     def is_similar_word(word: str, word_set: set) -> bool:
-    #         """Проверяет, есть ли похожее слово в наборе с учетом расстояния Левенштейна."""
-    #         return any(
-    #             levenshtein_distance(word, target_word) <= threshold_word
-    #             for target_word in word_set
-    #             if len(target_word.split()) == 1
-    #         )
-
-    #     def is_similar_sentence(sentence: str, sentence_set: set) -> bool:
-    #         """Проверяет, есть ли похожее предложение в наборе с учетом относительного расстояния."""
-    #         return any(
-    #             levenshtein_distance(sentence, target_sentence) / max(len(sentence), len(target_sentence))
-    #             <= threshold_sentence
-    #             for target_sentence in sentence_set
-    #             if len(target_sentence.split()) > 1
-    #         )
-
-    #     # Проверяем исключающие слова и предложения
-    #     if any(is_similar_word(word, excludes) for word in words) or any(
-    #         is_similar_sentence(sentence, excludes) for sentence in sentences
-    #     ):
-    #         return False
-
-    #     # Проверяем триггеры в словах и предложениях
-    #     if any(is_similar_word(word, triggers) for word in words) or any(
-    #         is_similar_sentence(sentence, triggers) for sentence in sentences
-    #     ):
-    #         return True
-
-    #     return False
-
     @staticmethod
-    async def take_message_answer(redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient) -> str:
+    async def take_message_answer(
+        redis_client: RedisClient,
+        session: AsyncSession,
+    ) -> str:
         if r := await redis_client.get("messages_to_answer"):
             return random.choice(r)
-        async with sqlalchemy_client.session_factory() as session:
-            r = (await session.scalars(select(MessageToAnswer.sentence))).all()
-            if not r:
-                return "Привет"
-            await redis_client.save("messages_to_answer", r, 60)
-            return random.choice(r)
+        user_manager_id = await redis_client.get("user_manager_id")
+
+        r = (
+            await session.scalars(
+                select(MessageToAnswer.sentence).where(MessageToAnswer.user_manager_id == user_manager_id),
+            )
+        ).all()
+        if not r:
+            return "Привет"
+        await redis_client.save("messages_to_answer", r, 60)
+        return random.choice(r)
 
     @staticmethod
-    async def get_monitoring_chat(sqlalchemy_client: SQLAlchemyClient, redis_client: RedisClient) -> list[str]:
+    async def get_monitoring_chat(session: AsyncSession, redis_client: RedisClient) -> list[str]:
         bot_id = await redis_client.get("bot_id")
-        async with sqlalchemy_client.session_factory() as session:
-            return (await session.scalars(select(MonitoringChat.id_chat).where(MonitoringChat.bot_id == bot_id))).all()
+        return (await session.scalars(select(MonitoringChat.id_chat).where(MonitoringChat.bot_id == bot_id))).all()
 
     @staticmethod
-    async def get_banned_usernames(sqlalchemy_client: SQLAlchemyClient) -> list[str]:
-        async with sqlalchemy_client.session_factory() as session:
-            return (await session.scalars(select(BannedUser.username))).all()
+    async def get_banned_usernames(session: AsyncSession, redis_client: RedisClient) -> list[str]:
+        user_manager_id = await redis_client.get("user_manager_id")
 
-    @staticmethod
-    async def get_not_banned_usernames(sqlalchemy_client: SQLAlchemyClient) -> list[str]:
-        async with sqlalchemy_client.session_factory() as session:
-            return (await session.scalars(select(BannedUser.username).where(BannedUser.is_banned.is_(False)))).all()
+        return (
+            await session.scalars(select(BannedUser.username).where(BannedUser.user_manager_id == user_manager_id))
+        ).all()
 
     @staticmethod
     async def get_ignored_words(
-        sqlalchemy_client: SQLAlchemyClient,
+        session: AsyncSession,
         redis_client: RedisClient,
         cashed: bool = False,
-    ) -> set:
+    ) -> set[str]:
         if cashed and (r := await redis_client.get("ignored_words")):
             return r
-        async with sqlalchemy_client.session_factory() as session:
-            r = (await session.scalars(select(IgnoredWord.word))).all()
-            r = set(r)
-            await redis_client.save("ignored_words", r, 60)
-            return r
+        user_manager_id = await redis_client.get("user_manager_id")
+
+        r = (
+            await session.scalars(select(IgnoredWord.word).where(IgnoredWord.user_manager_id == user_manager_id))
+        ).all()
+        r = set(r)
+        await redis_client.save("ignored_words", r, 60)
+        return r
 
     @staticmethod
     async def get_keywords(
-        sqlalchemy_client: SQLAlchemyClient,
+        session: AsyncSession,
         redis_client: RedisClient,
         cashed: bool = False,
-    ) -> set:
+    ) -> set[str]:
         if cashed and (r := await redis_client.get("keywords")):
             return r
-        async with sqlalchemy_client.session_factory() as session:
-            r = (await session.scalars(select(KeyWord.word))).all()
-            r = set(r)
-            await redis_client.save("keywords", r, 60)
-            return r
+        user_manager_id = await redis_client.get("user_manager_id")
+
+        r = (await session.scalars(select(KeyWord.word).where(KeyWord.user_manager_id == user_manager_id))).all()
+        r = set(r)
+        await redis_client.save("keywords", r, 60)
+        return r
 
     @staticmethod
-    async def get_messages_to_answer(sqlalchemy_client: SQLAlchemyClient) -> list[str]:
-        async with sqlalchemy_client.session_factory() as session:
-            return (await session.scalars(select(MessageToAnswer.sentence))).all()
+    async def get_messages_to_answer(session: AsyncSession, redis_client: RedisClient) -> list[str]:
+        user_manager_id = await redis_client.get("user_manager_id")
+
+        return (
+            await session.scalars(
+                select(MessageToAnswer.sentence).where(MessageToAnswer.user_manager_id == user_manager_id),
+            )
+        ).all()
 
     @staticmethod
     async def get_users_per_minute(
-        sqlalchemy_client: SQLAlchemyClient,
+        session: AsyncSession,
         redis_client: RedisClient,
         cashed: bool = False,
     ) -> int:
         if cashed and (r := await redis_client.get("users_per_minute")):
             return r
-        async with sqlalchemy_client.session_factory() as session:
-            r = (await session.scalars(select(UserManager.users_per_minute))).all()
-            r = max(r)
-            await redis_client.save("users_per_minute", r, 60)
-            return r
+        user_manager_id = await redis_client.get("user_manager_id")
+        r = await session.scalar(select(UserManager.users_per_minute).where(UserManager.id == user_manager_id))
+        await redis_client.save("users_per_minute", r, 60)
+        return r
 
     @staticmethod
-    async def user_exist(id_user: int, sqlalchemy_client: SQLAlchemyClient) -> bool:
-        async with sqlalchemy_client.session_factory() as session:
-            return bool(await session.scalar(select(UserAnalyzed).where(UserAnalyzed.id_user == id_user)))
+    async def user_exist(
+        id_user: int,
+        session: AsyncSession,
+    ) -> bool:
+        return bool(await session.scalar(select(UserAnalyzed).where(UserAnalyzed.id_user == id_user)))
 
     @staticmethod
-    async def add_user(sender: Any, event: events.NewMessage.Event, sqlalchemy_client: SQLAlchemyClient) -> None:
+    async def add_user(
+        sender: Any,
+        event: events.NewMessage.Event,
+        session: AsyncSession,
+        redis_client: RedisClient,
+    ) -> None:
         message = event.message.message
-        async with sqlalchemy_client.session_factory() as session:
-            user = UserAnalyzed(
-                id_user=sender.id,
-                message_id=event.message.id,
-                chat_id=event.chat_id,
-                additional_message=message,
-            )
-            if r := sender.username:
-                user.username = r
-            session.add(user)
-            await session.commit()
+        bot_id = await redis_client.get("bot_id")
+
+        user = UserAnalyzed(
+            id_user=sender.id,
+            message_id=event.message.id,
+            chat_id=event.chat_id,
+            additional_message=message,
+            bot_id=bot_id,
+        )
+        if r := sender.username:
+            user.username = r
+        session.add(user)
+        await session.commit()
 
     @staticmethod
-    async def add_user_v2(sender: Any, update: Message, sqlalchemy_client: SQLAlchemyClient) -> None:
+    async def add_user_v2(
+        sender: Any,
+        update: Message,
+        session: AsyncSession,
+        redis_client: RedisClient,
+    ) -> None:
         message = update.message
-        async with sqlalchemy_client.session_factory() as session:
-            user = UserAnalyzed(
-                id_user=sender.id,
-                message_id=update.id,
-                chat_id=update.peer_id.channel_id,
-                additional_message=message,
-            )
-            if r := sender.username:
-                user.username = r
-            session.add(user)
-            await session.commit()
+        bot_id = await redis_client.get("bot_id")
+
+        user = UserAnalyzed(
+            id_user=sender.id,
+            message_id=update.id,
+            chat_id=update.peer_id.channel_id,
+            additional_message=message,
+            bot_id=bot_id,
+        )
+        if r := sender.username:
+            user.username = r
+        session.add(user)
+        await session.commit()
 
     @staticmethod
     async def get_difference_update_channel(
         client: TelegramClient,
         chat_id: int,
         redis_client: RedisClient,
-    ) -> list:
+    ) -> list[Any]:
         """Получение обновлений для канала, используя GetChannelDifferenceRequest."""
         try:
             # Получение сущности канала
             channel = await Function.safe_get_entity(client, chat_id)
+            if not channel:
+                return []
             input_channel = InputChannel(channel.id, channel.access_hash)
 
             # Получение или инициализация pts из базы данных
@@ -311,10 +266,11 @@ class Function:
                 await redis_client.save(chat_id, pts)
 
             # Запрос разницы для канала
+            pts = int(pts)
             difference: ChannelDifference = await client(
                 GetChannelDifferenceRequest(
                     channel=input_channel,
-                    filter=ChannelMessagesFilter(ranges=[MessageRange(0, pts + 100)]),
+                    filter=ChannelMessagesFilter(ranges=[MessageRange(pts - 100, pts + 100)]),
                     pts=pts,
                     limit=100,  # Увеличенный лимит для захвата до 100 сообщений
                     force=False,
@@ -336,9 +292,6 @@ class Function:
             if difference.new_messages:
                 updates.extend(difference.new_messages)
                 logger.info(f"Канал {chat_id}: получено {len(difference.new_messages)} новых сообщений")
-            # if difference.other_updates:
-            #     updates.extend(difference.other_updates)
-            #     logger.info(f"Канал {chat_id}: получено {len(difference.other_updates)} других обновлений")
 
             # Обновление pts в базе данных
             await redis_client.save(chat_id, difference.pts)
@@ -372,19 +325,30 @@ class Function:
                 return None
 
     @staticmethod
-    async def get_folders_chat(client: TelegramClient) -> list[dict] | None:
+    async def get_folders_chat(client: TelegramClient) -> list[dict[str, Any]] | None:
         await client.catch_up()
         result = await client(functions.messages.GetDialogFiltersRequest())
         folders = result.filters
-        f = []
+        return [
+            {
+                "name": folder.title.text,
+                "include_peers": [i.user_id for i in folder.include_peers if getattr(i, "user_id", False)],
+                "pinned_peers": [i.user_id for i in folder.pinned_peers if getattr(i, "user_id", False)],
+            }
+            for folder in folders
+            if isinstance(folder, DialogFilter)
+        ]
+
+    @staticmethod
+    async def get_processed_users(
+        client: TelegramClient,
+        folders: list[dict[str, list[dict[str, str] | str]]],
+    ) -> list[dict[str, list[dict[str, str] | str]]] | None:
+        await client.catch_up()
         for folder in folders:
-            if not isinstance(folder, DialogFilter):
-                continue
             users = []
-            for peer in folder.pinned_peers:
-                if not isinstance(peer, InputPeerUser):
-                    continue
-                user = await Function.safe_get_entity(client, peer.user_id)
+            for peer in folder.get("pinned_peers", []):
+                user = await Function.safe_get_entity(client, peer)  # type: ignore
                 if not user:
                     continue
                 users.append(
@@ -396,11 +360,11 @@ class Function:
                         "phone": user.phone,
                     },
                 )
-            f.append([folder.title.text, users])
-        return f
+            folder["pinned_peers"] = users  # type: ignore
+        return folders
 
     @staticmethod
-    async def update_chat_title(client: TelegramClient, session: AsyncSession, bot_id: int) -> str:
+    async def update_chat_title(client: TelegramClient, session: AsyncSession, bot_id: int) -> None:
         chats = await session.scalars(
             select(MonitoringChat).where(and_(MonitoringChat.bot_id == bot_id, MonitoringChat.title.is_(None))),
         )
@@ -412,18 +376,18 @@ class Function:
             chat.title = chat_.title
 
     @staticmethod
-    async def update_me_name(client: TelegramClient, session: AsyncSession, bot_id: int) -> str:
-        me = await session.get(Bot, bot_id)
+    async def update_me_name(client: TelegramClient, session: AsyncSession, bot_id: int) -> None:
+        bot = await session.get(Bot, bot_id)
         with contextlib.suppress(Exception):
-            me_ = await client.get_me()
-            me.name = me_.first_name
+            me = await client.get_me()
+            bot.name = me.first_name
 
     @staticmethod
-    async def is_work(redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient, ttl: int = 60) -> bool:
+    async def is_work(redis_client: RedisClient, session: AsyncSession, ttl: int = 60) -> bool:
         if await redis_client.get("is_work"):
             return True
-        async with sqlalchemy_client.session_factory() as session:
-            bot_id = await redis_client.get("bot_id")
-            r = await session.scalar(select(Bot.is_started).where(Bot.id == bot_id))
-            await redis_client.save("is_work", r, ttl)
-            return r
+
+        bot_id = await redis_client.get("bot_id")
+        r = await session.scalar(select(Bot.is_started).where(Bot.id == bot_id))
+        await redis_client.save("is_work", r, ttl)
+        return r

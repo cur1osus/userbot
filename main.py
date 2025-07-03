@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import logging
 
-from background_jobs import handling_difference_update_chanel, send_message, execute_jobs
+from background_jobs import execute_jobs, handling_difference_update_chanel, send_message
 from config.config import load_config
 from db.redis.redis_client import RedisClient
 from db.sqlalchemy.models import Bot
@@ -10,7 +10,7 @@ from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from modules import new_msg, ping
 from scheduler import Scheduler
 from sqlalchemy import select
-from telethon import TelegramClient
+from telethon import TelegramClient  # type: ignore
 from utils.logger import setup_logger
 
 # Создаём объект парсера аргументов
@@ -49,7 +49,7 @@ async def main() -> None:
         return
 
     # Инициализация Telegram клиента
-    async with sqlalchemy_client.session_factory() as session:  # type: ignore
+    async with sqlalchemy_client.session_factory() as session:  # type ignore
         bot: Bot = await session.scalar(select(Bot).where(Bot.phone == bot_phone))
         if not bot:
             logger.error(f"Бот {bot_phone} не найден в базе данных")
@@ -59,14 +59,16 @@ async def main() -> None:
         await client.connect()
         if not await client.is_user_authorized():
             logger.info("Сессия не авторизована :(")
+            exit()
         else:
             logger.info("Сессия успешно загружена!")
             logger.info("Клиент Telegram инициализирован")
     except Exception as e:
         logger.exception(f"Ошибка при инициализации клиента: {e}")
-        return
-    redis_client.id_bot = bot.api_id
+        exit()
+    redis_client.id_bot = f"{bot.api_id}{bot.user_manager_id}"
     await redis_client.save("bot_id", bot.id)
+    await redis_client.save("user_manager_id", bot.user_manager_id)
     # Регистрация модулей
     modules = [
         ping.register,  # Передаем sqlalchemy_client
