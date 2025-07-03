@@ -271,9 +271,9 @@ class Function:
             difference: ChannelDifference = await client(
                 GetChannelDifferenceRequest(
                     channel=input_channel,
-                    filter=ChannelMessagesFilter(ranges=[MessageRange(pts - 100, pts + 100)]),
+                    filter=ChannelMessagesFilter(ranges=[MessageRange(0, pts + 100)]),
                     pts=pts,
-                    limit=100,  # Увеличенный лимит для захвата до 100 сообщений
+                    limit=1000,  # Увеличенный лимит для захвата до 100 сообщений
                     force=False,
                 ),
             )
