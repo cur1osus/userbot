@@ -26,6 +26,7 @@ from telethon.tl.types import (  # type: ignore
     InputChannel,
     Message,
     MessageRange,
+    Channel,
 )
 from telethon.tl.types.updates import (  # type: ignore
     ChannelDifference,
@@ -373,7 +374,8 @@ class Function:
 
             if not chat_:
                 continue
-            chat.title = chat_.title
+            with contextlib.suppress(Exception):
+                chat.title = chat_.title
 
     @staticmethod
     async def update_me_name(client: TelegramClient, session: AsyncSession, bot_id: int) -> None:
