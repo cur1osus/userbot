@@ -124,7 +124,7 @@ class Function:
     @staticmethod
     async def get_monitoring_chat(session: AsyncSession, redis_client: RedisClient) -> list[str]:
         bot_id = await redis_client.get("bot_id")
-        return (await session.scalars(select(MonitoringChat.id_chat).where(MonitoringChat.bot_id == bot_id))).all()
+        return (await session.scalars(select(MonitoringChat.chat_id).where(MonitoringChat.bot_id == bot_id))).all()
 
     @staticmethod
     async def get_banned_usernames(session: AsyncSession, redis_client: RedisClient) -> list[str]:
@@ -369,7 +369,7 @@ class Function:
             select(MonitoringChat).where(and_(MonitoringChat.bot_id == bot_id, MonitoringChat.title.is_(None))),
         )
         for chat in chats:
-            chat_ = await Function.safe_get_entity(client, int(chat.id_chat))
+            chat_ = await Function.safe_get_entity(client, int(chat.chat_id))
 
             if not chat_:
                 continue
