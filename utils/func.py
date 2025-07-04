@@ -39,11 +39,12 @@ logger = logging.getLogger(__name__)
 
 class Function:
     @staticmethod
-    async def get_closer_data_user(
-        session: AsyncSession,
-    ) -> UserAnalyzed | None:
+    async def get_closer_data_user(session: AsyncSession, bot_id: int) -> UserAnalyzed | None:
         user = await session.scalar(
-            select(UserAnalyzed).where(UserAnalyzed.sended.is_(False)).order_by(UserAnalyzed.id.asc()).limit(1),
+            select(UserAnalyzed)
+            .where(and_(UserAnalyzed.sended.is_(False), UserAnalyzed.bot_id == bot_id))
+            .order_by(UserAnalyzed.id.asc())
+            .limit(1),
         )
 
         if not user:
@@ -53,7 +54,7 @@ class Function:
         return user
 
     @staticmethod
-    async def send_message_two(client: Any, user: UserAnalyzed, ans: str) -> None:
+    async def send_message_two(client: TelegramClient, user: UserAnalyzed, ans: str) -> None:
         await client.send_message(entity=user.id_user, message=ans)
         await client.forward_messages(
             entity=user.id_user,
