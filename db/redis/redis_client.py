@@ -43,7 +43,7 @@ class RedisClient:
     def key(self, key: str | int) -> str:
         return f"{self.prefix}:{self.id_bot}:{key}"
 
-    async def save(self, key: str, value: dict[str, str | int] | int | str, ttl: int | None = None) -> None:
+    async def save(self, key: Any, value: Any, ttl: int | None = None) -> None:
         """
         Сохраняет данные в Redis с использованием msgspec для сериализации.
 
@@ -59,7 +59,7 @@ class RedisClient:
         else:
             await self.redis.set(self.key(key), serialized_data)
 
-    async def get(self, key: str) -> Any | None:
+    async def get(self, key: Any) -> Any | None:
         """
         Извлекает данные из Redis и десериализует их с использованием msgspec.
 

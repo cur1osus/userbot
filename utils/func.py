@@ -19,17 +19,15 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient, events, functions  # type: ignore
 from telethon.tl.functions.channels import GetFullChannelRequest  # type: ignore
+from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.functions.updates import GetChannelDifferenceRequest  # type: ignore
 from telethon.tl.types import (  # type: ignore
     ChannelMessagesFilter,
     DialogFilter,
     InputChannel,
     Message,
-    MessageRange,
-    Channel,
 )
 from telethon.tl.types.updates import (  # type: ignore
-    ChannelDifference,
     ChannelDifferenceEmpty,
     ChannelDifferenceTooLong,
 )
@@ -248,60 +246,108 @@ class Function:
         chat_id: int,
         redis_client: RedisClient,
     ) -> list[Any]:
-        """Получение обновлений для канала, используя GetChannelDifferenceRequest."""
+        """Улучшенное получение обновлений для канала с максимальным охватом сообщений."""
         try:
-            # Получение сущности канала
             channel = await Function.safe_get_entity(client, chat_id)
             if not channel:
                 return []
+
             input_channel = InputChannel(channel.id, channel.access_hash)
-
-            # Получение или инициализация pts из базы данных
-
             chat_pts = await redis_client.get(chat_id)
-            if chat_pts:
-                pts = chat_pts
-            else:
-                # Инициализация pts через GetFullChannelRequest
+
+            # Инициализация PTS через GetFullChannelRequest при первом запуске
+            if not chat_pts:
                 full_channel = await client(GetFullChannelRequest(input_channel))
                 pts = full_channel.full_chat.pts
                 await redis_client.save(chat_id, pts)
+                logger.info(f"Инициализирован PTS={pts} для канала {chat_id}")
+            else:
+                pts = int(chat_pts)
 
-            # Запрос разницы для канала
-            pts = int(pts)
-            difference: ChannelDifference = await client(
+            # Запрос разницы БЕЗ фильтра (критически важно!)
+            difference = await client(
                 GetChannelDifferenceRequest(
                     channel=input_channel,
-                    filter=ChannelMessagesFilter(ranges=[MessageRange(0, pts + 100)]),
+                    filter=ChannelMessagesFilter(),  # Пустой фильтр — получаем ВСЕ сообщения
                     pts=pts,
-                    limit=1000,  # Увеличенный лимит для захвата до 100 сообщений
-                    force=False,
-                ),
+                    limit=100,  # Максимально допустимый лимит Telegram
+                    force=True,  # Гарантирует получение данных даже при небольших изменениях
+                )
             )
 
+            # Обработка случаев
             if isinstance(difference, ChannelDifferenceEmpty):
-                logger.info(f"Состояние канала {chat_id} актуально, pts={pts}")
+                logger.debug(f"Канал {chat_id}: состояние актуально (PTS={pts})")
                 return []
+
             if isinstance(difference, ChannelDifferenceTooLong):
-                logger.warning(f"Состояние канала {chat_id} устарело, pts={pts} слишком старый")
-                # Сброс pts до актуального значения
-                full_channel = await client(GetFullChannelRequest(input_channel))
-                await redis_client.save(chat_id, full_channel.full_chat.pts)
-                return []
+                logger.warning(f"Канал {chat_id}: PTS={pts} сильно устарел. Получаем историю...")
+                return await Function._handle_too_long_state(client, input_channel, redis_client, chat_id)
 
-            # Обработка обновлений
-            updates = []
-            if difference.new_messages:
-                updates.extend(difference.new_messages)
-                logger.info(f"Канал {chat_id}: получено {len(difference.new_messages)} новых сообщений")
+            # Сбор ВСЕХ сообщений (включая other_updates)
+            updates = difference.new_messages.copy()
+            if hasattr(difference, "other_updates") and difference.other_updates:
+                updates.extend(
+                    [
+                        update.message
+                        for update in difference.other_updates
+                        if hasattr(update, "message") and update.message
+                    ]
+                )
 
-            # Обновление pts в базе данных
-            await redis_client.save(chat_id, difference.pts)
+            # Обновление PTS только если есть изменения
+            if difference.pts > pts:
+                await redis_client.save(chat_id, difference.pts)
+                logger.info(
+                    f"Канал {chat_id}: получено {len(updates)} сообщений. PTS обновлен: {pts} → {difference.pts}"
+                )
+            else:
+                logger.warning(
+                    f"Канал {chat_id}: PTS не увеличился ({pts} → {difference.pts}). Возможно, ошибка синхронизации."
+                )
 
-            return updates  # noqa: TRY300
+            return updates
 
         except Exception as e:
-            logger.exception(f"Ошибка при получении обновлений для канала {chat_id}: {e}")
+            logger.exception(f"Критическая ошибка при обработке канала {chat_id}: {e}")
+            return []
+
+    @staticmethod
+    async def _handle_too_long_state(
+        client: TelegramClient,
+        input_channel: InputChannel,
+        redis_client: RedisClient,
+        chat_id: int,
+    ) -> list[Any]:
+        """Обработка устаревшего PTS через историю сообщений"""
+        try:
+            # Получаем последние 100 сообщений (максимум за один запрос)
+            history = await client(
+                GetHistoryRequest(
+                    peer=input_channel,
+                    limit=100,
+                    offset_date=None,
+                    offset_id=0,
+                    max_id=0,
+                    min_id=0,
+                    add_offset=0,
+                    hash=0,
+                )
+            )
+
+            # Обновляем PTS до актуального
+            full_channel = await client(GetFullChannelRequest(input_channel))
+            new_pts = full_channel.full_chat.pts
+            await redis_client.save(chat_id, new_pts)
+
+            logger.warning(
+                f"Канал {chat_id}: восстановлено {len(history.messages)} сообщений "
+                f"из истории после PTS устаревания (новый PTS={new_pts})"
+            )
+            return history.messages
+
+        except Exception as e:
+            logger.error(f"Ошибка при обработке ChannelDifferenceTooLong для {chat_id}: {e}")
             return []
 
     @staticmethod
