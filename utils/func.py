@@ -26,6 +26,7 @@ from telethon.tl.types import (  # type: ignore
     DialogFilter,
     InputChannel,
     Message,
+    MessageRange,
 )
 from telethon.tl.types.updates import (  # type: ignore
     ChannelDifferenceEmpty,
@@ -265,13 +266,15 @@ class Function:
                 pts = int(chat_pts)
 
             # Запрос разницы БЕЗ фильтра (критически важно!)
+            MAX_MESSAGE_ID = 2**31 - 1  # Макс. значение для 32-bit signed int (Telegram использует 32-bit ID)
+            filter = ChannelMessagesFilter(ranges=[MessageRange(0, MAX_MESSAGE_ID)], exclude_new_messages=False)
             difference = await client(
                 GetChannelDifferenceRequest(
                     channel=input_channel,
-                    filter=ChannelMessagesFilter(),  # Пустой фильтр — получаем ВСЕ сообщения
+                    filter=filter,
                     pts=pts,
-                    limit=100,  # Максимально допустимый лимит Telegram
-                    force=True,  # Гарантирует получение данных даже при небольших изменениях
+                    limit=100,  # Макс. лимит Telegram API
+                    force=True,  # Гарантируем получение изменений
                 )
             )
 
