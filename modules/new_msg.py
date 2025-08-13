@@ -21,17 +21,27 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
 
             msg_text = event.message.message
             sender: User = await event.get_sender()
-            triggers = fn.get_keywords(session, redis_client, cashed=True)
-            excludes = fn.get_ignored_words(session, redis_client, cashed=True)
-            if not await fn.is_acceptable_message(msg_text, triggers, excludes):
+            triggers = await fn.get_keywords(session, redis_client, cashed=True)
+            excludes = await fn.get_ignored_words(session, redis_client, cashed=True)
+            data_for_decision = {}
+
+            if not sender:
                 return
+
+            is_acceptable, message_for_decision = await fn.is_acceptable_message(msg_text, triggers, excludes)
+            if not is_acceptable:
+                data_for_decision["message"] = message_for_decision
+
+            mention = await fn.parse_mention(msg_text)
+            if not mention:
+                data_for_decision["not_mention"] = True
 
             banned_users = await fn.get_banned_usernames(session, redis_client)
             if sender.username and (f"@{sender.username}" in banned_users):
-                return
+                data_for_decision["banned"] = f"@{sender.username}"
 
             if await fn.user_exist(sender.id, session):
-                return
+                data_for_decision["already_exist"] = sender.username or sender.first_name
 
             chat = await fn.safe_get_entity(client, event.chat_id)
             if not chat:
@@ -41,4 +51,6 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
             if isinstance(chat, Chat):
                 logger.info(f"Записал на отработку человека с этого чата: {chat.title}")
 
-            await fn.add_user(sender, event, session, redis_client)
+            data_for_decision = data_for_decision if len(data_for_decision) > 0 else None
+
+            await fn.add_user(sender, event, session, redis_client, data_for_decision)

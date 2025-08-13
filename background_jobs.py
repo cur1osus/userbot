@@ -57,28 +57,30 @@ async def handling_difference_update_chanel(
                 msg_text = update.message
                 triggers = await fn.get_keywords(session, redis_client, cashed=True)
                 excludes = await fn.get_ignored_words(session, redis_client, cashed=True)
-                if not await fn.is_acceptable_message(msg_text, triggers, excludes):
-                    logger.info(f"Сообщение не прошло проверку: {msg_text}")
-                    return
+                data_for_decision = {}
+
+                is_acceptable, message_for_decision = await fn.is_acceptable_message(msg_text, triggers, excludes)
+                if not is_acceptable:
+                    data_for_decision["message"] = message_for_decision
+
                 mention = await fn.parse_mention(update.message)
                 if not mention:
-                    logger.info(f"Сообщение не содержит упоминания: {msg_text}")
-                    return
+                    data_for_decision["not_mention"] = True
+
                 sender = await fn.safe_get_entity(client, mention)
                 if not sender:
                     return
 
                 banned_users = await fn.get_banned_usernames(session, redis_client)
                 if sender.username and (f"@{sender.username}" in banned_users):
-                    logger.info(f"Пользователь {sender.username} находится в бане")
-                    return
+                    data_for_decision["banned"] = f"@{sender.username}"
 
                 if await fn.user_exist(sender.id, session):
-                    logger.info(f"Пользователь {sender.id} уже есть в базе")
-                    return
+                    data_for_decision["already_exist"] = sender.username or sender.first_name
 
-                logger.info(f"Записал на отработку человека с этого канала: {channel_entity.title}")
-                await fn.add_user_v2(sender, update, session, redis_client)
+                data_for_decision = data_for_decision if len(data_for_decision) > 0 else None
+
+                await fn.add_user_v2(sender, update, session, redis_client, data_for_decision)
 
 
 task_func = {

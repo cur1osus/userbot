@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -15,18 +14,21 @@ from .base import Base
 class Bot(Base):
     __tablename__ = "bots"
 
-    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"))
-    manager: Mapped["UserManager"] = relationship(
-        back_populates="bots",
-        cascade="all, delete",
+    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"), nullable=False)
+    manager: Mapped["UserManager"] = relationship(back_populates="bots")
+    chats: Mapped[list["MonitoringChat"]] = relationship(
+        back_populates="bot", lazy="selectin", cascade="all, delete-orphan"
     )
-    chats: Mapped[list["MonitoringChat"]] = relationship(back_populates="bot", lazy="selectin")
-    jobs: Mapped[list["Job"]] = relationship(back_populates="bot", lazy="selectin")
+    jobs: Mapped[list["Job"]] = relationship(
+        back_populates="bot",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
     users_analyzed: Mapped[list["UserAnalyzed"]] = relationship(back_populates="bot", lazy="selectin")
 
     name: Mapped[str] = mapped_column(String(50), nullable=True)
-    phone: Mapped[str] = mapped_column(String(50), unique=True)
-    api_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    phone: Mapped[str] = mapped_column(String(50))
+    api_id: Mapped[int] = mapped_column(BigInteger)
     api_hash: Mapped[str] = mapped_column(String(100))
     path_session: Mapped[str] = mapped_column(String(100))
     is_connected: Mapped[bool] = mapped_column(default=False)
@@ -36,11 +38,11 @@ class Bot(Base):
 class Job(Base):
     __tablename__ = "jobs"
 
-    bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"))
+    bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"), nullable=False)
     bot: Mapped[Bot] = relationship(back_populates="jobs")
 
     task: Mapped[str] = mapped_column(String(50))
-    task_metadata: Mapped[str] = mapped_column(String(1000), nullable=True)
+    task_metadata: Mapped[int] = mapped_column(BLOB, nullable=True)
     answer: Mapped[int] = mapped_column(BLOB, nullable=True)
 
 
@@ -54,7 +56,7 @@ class JobName(Enum):
 class MonitoringChat(Base):
     __tablename__ = "monitoring_chats"
 
-    bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"))
+    bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"), nullable=False)
     bot: Mapped[Bot] = relationship(back_populates="chats")
 
     chat_id: Mapped[str] = mapped_column(String(50))
@@ -64,7 +66,7 @@ class MonitoringChat(Base):
 class UserAnalyzed(Base):
     __tablename__ = "users_analyzed"
 
-    bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"))
+    bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"), nullable=True)
     bot: Mapped[Bot] = relationship(back_populates="users_analyzed")
 
     id_user: Mapped[int] = mapped_column(BigInteger, unique=True)
@@ -73,42 +75,44 @@ class UserAnalyzed(Base):
     chat_id: Mapped[str] = mapped_column(String(50), nullable=True)
     additional_message: Mapped[str] = mapped_column(String(1000))
     sended: Mapped[bool] = mapped_column(default=False)
+    accepted: Mapped[bool] = mapped_column(default=True)
+    decision: Mapped[int] = mapped_column(BLOB, nullable=True)
 
 
 class KeyWord(Base):
     __tablename__ = "keywords"
 
-    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"))
+    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"), nullable=False)
     manager: Mapped["UserManager"] = relationship(back_populates="keywords")
 
-    word: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
+    word: Mapped[str] = mapped_column(String(500), nullable=False)
 
 
 class IgnoredWord(Base):
     __tablename__ = "ignored_words"
 
-    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"))
+    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"), nullable=False)
     manager: Mapped["UserManager"] = relationship(back_populates="ignored_words")
 
-    word: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
+    word: Mapped[str] = mapped_column(String(500), nullable=False)
 
 
 class MessageToAnswer(Base):
     __tablename__ = "messages_to_answer"
 
-    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"))
+    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"), nullable=False)
     manager: Mapped["UserManager"] = relationship(back_populates="messages_to_answer")
 
-    sentence: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
+    sentence: Mapped[str] = mapped_column(String(500), nullable=False)
 
 
 class BannedUser(Base):
     __tablename__ = "banned_users"
 
-    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"))
+    user_manager_id: Mapped[int] = mapped_column(ForeignKey("user_managers.id"), nullable=False)
     manager: Mapped["UserManager"] = relationship(back_populates="banned_users")
 
-    id_user: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=True)
+    id_user: Mapped[int] = mapped_column(BigInteger, nullable=True)
     username: Mapped[str] = mapped_column(String(50), nullable=True)
     is_banned: Mapped[bool] = mapped_column(default=False)
 
@@ -150,8 +154,6 @@ class UserManager(Base):
         cascade="all, delete-orphan",
     )
 
-    async def get_obj_bot(self, bot_id: int) -> "Bot":
-        return next(bot for bot in self.bots if bot.id == bot_id)
-
-    async def get_obj_by_id(self, id: int, list_obj: list[Any]) -> Any:
-        return next(i for i in list_obj if i.id == id)
+    async def get_obj_bot(self, bot_id: int) -> Bot | None:
+        r: list[Bot] = [bot for bot in self.bots if bot.id == bot_id]
+        return r[0] if r else None

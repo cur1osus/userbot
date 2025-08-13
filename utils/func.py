@@ -4,6 +4,8 @@ import random
 import re
 from typing import Any
 
+import msgpack
+
 from db.redis.redis_client import RedisClient
 from db.sqlalchemy.models import (
     BannedUser,
@@ -41,7 +43,13 @@ class Function:
     async def get_closer_data_user(session: AsyncSession, bot_id: int) -> UserAnalyzed | None:
         user = await session.scalar(
             select(UserAnalyzed)
-            .where(and_(UserAnalyzed.sended.is_(False), UserAnalyzed.bot_id == bot_id))
+            .where(
+                and_(
+                    UserAnalyzed.accepted.is_(True),
+                    UserAnalyzed.sended.is_(False),
+                    UserAnalyzed.bot_id == bot_id,
+                )
+            )
             .order_by(UserAnalyzed.id.asc())
             .limit(1),
         )
@@ -96,12 +104,24 @@ class Function:
         return match[0][1:] if match else None
 
     @staticmethod
-    async def is_acceptable_message(message: str, triggers: set[str], excludes: set[str]) -> bool:
-        message = message.lower().replace("\n", " ")
-        triggers = {trigger.lower() for trigger in triggers}
-        excludes = {exclude.lower() for exclude in excludes}
-        r = any(keyword in message for keyword in triggers)
-        return r and all(ignored_word not in message for ignored_word in excludes)
+    async def is_acceptable_message(message: str, triggers: set[str], excludes: set[str]) -> tuple[bool, str]:
+        message_clean = message.lower().replace("\n", " ")
+        triggers_lower = {trigger.lower() for trigger in triggers}
+        excludes_lower = {exclude.lower() for exclude in excludes}
+
+        # Проверяем, есть ли хотя бы один триггер
+        has_trigger = any(keyword in message_clean for keyword in triggers_lower)
+
+        # Находим все слова из excludes, присутствующие в сообщении
+        found_ignores = {word for word in excludes_lower if word in message_clean}
+
+        # Сообщение допустимо, если есть триггер и НЕТ ни одного слова из исключений
+        is_acceptable = has_trigger and (len(found_ignores) == 0)
+
+        for word in found_ignores:
+            message = message.replace(word, f"->{word.upper()}<-")
+
+        return is_acceptable, message
 
     @staticmethod
     async def take_message_answer(
@@ -195,7 +215,17 @@ class Function:
         id_user: int,
         session: AsyncSession,
     ) -> bool:
-        return bool(await session.scalar(select(UserAnalyzed).where(UserAnalyzed.id_user == id_user)))
+        return bool(
+            await session.scalar(
+                select(UserAnalyzed).where(
+                    and_(
+                        UserAnalyzed.id_user == id_user,
+                        UserAnalyzed.accepted.is_(True),
+                        UserAnalyzed.sended.is_(True),
+                    )
+                )
+            )
+        )
 
     @staticmethod
     async def add_user(
@@ -203,6 +233,7 @@ class Function:
         event: events.NewMessage.Event,
         session: AsyncSession,
         redis_client: RedisClient,
+        data_for_decision: dict[str, Any] | None,
     ) -> None:
         message = event.message.message
         bot_id = await redis_client.get("bot_id")
@@ -214,6 +245,9 @@ class Function:
             additional_message=message,
             bot_id=bot_id,
         )
+        if data_for_decision:
+            user.decision = msgpack.packb(data_for_decision)
+            user.accepted = False
         if r := sender.username:
             user.username = r
         session.add(user)
@@ -225,6 +259,7 @@ class Function:
         update: Message,
         session: AsyncSession,
         redis_client: RedisClient,
+        data_for_decision: dict[str, Any] | None,
     ) -> None:
         message = update.message
         bot_id = await redis_client.get("bot_id")
@@ -236,6 +271,9 @@ class Function:
             additional_message=message,
             bot_id=bot_id,
         )
+        if data_for_decision:
+            user.decision = msgpack.packb(data_for_decision)
+            user.accepted = False
         if r := sender.username:
             user.username = r
         session.add(user)
