@@ -59,9 +59,9 @@ async def handling_difference_update_chanel(
                 excludes = await fn.get_ignored_words(session, redis_client, cashed=True)
                 data_for_decision = {}
 
-                is_acceptable, message_for_decision = await fn.is_acceptable_message(msg_text, triggers, excludes)
+                is_acceptable, list_word_for_decision = await fn.is_acceptable_message(msg_text, triggers, excludes)
                 if not is_acceptable:
-                    data_for_decision["message"] = message_for_decision
+                    data_for_decision["message"] = list_word_for_decision
 
                 mention = await fn.parse_mention(update.message)
                 if not mention:
