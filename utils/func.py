@@ -104,7 +104,9 @@ class Function:
         return match[0][1:] if match else None
 
     @staticmethod
-    async def is_acceptable_message(message: str, triggers: set[str], excludes: set[str]) -> tuple[bool, list[str]]:
+    async def is_acceptable_message(
+        message: str, triggers: set[str], excludes: set[str]
+    ) -> tuple[bool, list[str], list[str]]:
         message_clean = message.lower().replace("\n", " ")
         triggers_lower = {trigger.lower() for trigger in triggers}
         excludes_lower = {exclude.lower() for exclude in excludes}
@@ -114,11 +116,12 @@ class Function:
 
         # Находим все слова из excludes, присутствующие в сообщении
         found_ignores = {word for word in excludes_lower if word in message_clean}
+        found_trigger = {word for word in triggers_lower if word in message_clean}
 
         # Сообщение допустимо, если есть триггер и НЕТ ни одного слова из исключений
         is_acceptable = has_trigger and (len(found_ignores) == 0)
 
-        return is_acceptable, list(found_ignores)
+        return is_acceptable, list(found_ignores), list(found_trigger)
 
     @staticmethod
     async def take_message_answer(
