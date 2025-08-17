@@ -77,9 +77,13 @@ async def handling_difference_update_chanel(
                 banned_users = await fn.get_banned_usernames(session, redis_client)
                 if sender.username and (f"@{sender.username}" in banned_users):
                     data_for_decision["banned"] = f"@{sender.username}"
+                    data_for_decision["ignores"] = list_ignore_for_decision
+                    data_for_decision["triggers"] = list_trigger_for_decision
 
                 if await fn.user_exist(sender.id, session):
                     data_for_decision["already_exist"] = sender.username or sender.first_name
+                    data_for_decision["ignores"] = list_ignore_for_decision
+                    data_for_decision["triggers"] = list_trigger_for_decision
 
                 data_for_decision = data_for_decision if len(data_for_decision) > 0 else None
 
