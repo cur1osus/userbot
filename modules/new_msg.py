@@ -20,17 +20,18 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
                 return
 
             msg_text = event.message.message
-            sender: User = await event.get_sender()
             triggers = await fn.get_keywords(session, redis_client, cashed=True)
             excludes = await fn.get_ignored_words(session, redis_client, cashed=True)
             data_for_decision = {}
 
+            is_acceptable, found_ignores, found_triggers = await fn.is_acceptable_message(msg_text, triggers, excludes)
+            if not is_acceptable:
+                data_for_decision["ignores"] = found_ignores
+                data_for_decision["triggers"] = found_triggers
+
+            sender: User = await event.get_sender()
             if not sender:
                 return
-
-            is_acceptable, message_for_decision = await fn.is_acceptable_message(msg_text, triggers, excludes)
-            if not is_acceptable:
-                data_for_decision["message"] = message_for_decision
 
             mention = await fn.parse_mention(msg_text)
             if not mention:

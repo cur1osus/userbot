@@ -1,8 +1,7 @@
 import logging
 
 from config.config import Config
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .models import Base  # noqa: F401
 
@@ -13,7 +12,7 @@ class SQLAlchemyClient:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.engine = None
-        self.session_factory = None
+        self.session_factory: async_sessionmaker[AsyncSession]
         self.logger = logging.getLogger(__name__)
 
     async def connect(self) -> None:
@@ -24,7 +23,7 @@ class SQLAlchemyClient:
                 pool_pre_ping=True,
                 pool_recycle=900,
             )
-            self.session_factory = sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
+            self.session_factory = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
             self.logger.info("Подключение к mysql установлено")
         except Exception as e:
             self.logger.exception(f"Ошибка подключения к mysql: {e}")

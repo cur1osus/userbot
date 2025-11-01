@@ -5,7 +5,6 @@ import re
 from typing import Any
 
 import msgpack
-
 from db.redis.redis_client import RedisClient
 from db.sqlalchemy.models import (
     BannedUser,
@@ -20,6 +19,7 @@ from db.sqlalchemy.models import (
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient, events, functions  # type: ignore
+from telethon.errors import FloodWaitError
 from telethon.tl.functions.channels import GetFullChannelRequest  # type: ignore
 from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.functions.updates import GetChannelDifferenceRequest  # type: ignore
@@ -392,10 +392,15 @@ class Function:
             return []
 
     @staticmethod
-    async def safe_get_entity(client: TelegramClient, peer_id: int) -> Any | None:
+    async def safe_get_entity(client: TelegramClient, peer_id: int | None) -> Any | None:
+        if peer_id is None:
+            return None
         try:
             # Сначала пробуем получить пользователя напрямую
             return await client.get_entity(peer_id)
+        except FloodWaitError as e:
+            logger.info(f"Пользователь {peer_id} временно недоступен из-за FloodWaitError: {e}")
+            return None
         except ValueError:
             logger.info(f"Пользователь {peer_id} не найден в кэше, обновляем диалоги...")
 
