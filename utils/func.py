@@ -238,6 +238,9 @@ class Function:
         message = event.message.message
         bot_id = await redis_client.get("bot_id")
 
+        if r := await session.scalar(select(UserAnalyzed).where(UserAnalyzed.id_user == sender.id)):
+            return
+
         user = UserAnalyzed(
             id_user=sender.id,
             message_id=event.message.id,
@@ -263,6 +266,9 @@ class Function:
     ) -> None:
         message = update.message
         bot_id = await redis_client.get("bot_id")
+
+        if r := await session.scalar(select(UserAnalyzed).where(UserAnalyzed.id_user == sender.id)):
+            return
 
         user = UserAnalyzed(
             id_user=sender.id,
