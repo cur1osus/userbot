@@ -2,6 +2,7 @@ import contextlib
 import logging
 import random
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import msgpack
@@ -19,7 +20,7 @@ from db.sqlalchemy.models import (
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient, events, functions  # type: ignore
-from telethon.errors import FloodWaitError
+from telethon.errors import ChannelPrivateError, FloodWaitError
 from telethon.tl.functions.channels import GetFullChannelRequest  # type: ignore
 from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.functions.updates import GetChannelDifferenceRequest  # type: ignore
@@ -36,6 +37,12 @@ from telethon.tl.types.updates import (  # type: ignore
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Status:
+    ok: bool
+    message: str = ""
 
 
 class Function:
@@ -398,15 +405,40 @@ class Function:
             return []
 
     @staticmethod
+    async def handle_status(session: AsyncSession, status: Status, bot_id: int):
+        match status.message:
+            case "ChannelPrivateError":
+                session.add(
+                    Job(
+                        bot_id=bot_id,
+                        task="delete_private_channel",
+                        task_metadata=msgpack.packb(channel),
+                    )
+                )
+            case "ConnectionError":
+                session.add(
+                    Job(
+                        bot_id=bot_id,
+                        task="connection_error",
+                    )
+                )
+
+    @staticmethod
     async def safe_get_entity(client: TelegramClient, peer_id: int | None) -> Any | None:
         if peer_id is None:
             return None
         try:
             # Сначала пробуем получить пользователя напрямую
             return await client.get_entity(peer_id)
+        except ChannelPrivateError:
+            logger.error(f"Ошибка при получении пользователя {peer_id}: ChannelPrivateError")
+            return Status(ok=False, message="ChannelPrivateError")
+        except ConnectionError as e:
+            logger.error(f"Ошибка при получении пользователя {peer_id}: {e}")
+            return Status(ok=False, message="ConnectionError")
         except FloodWaitError as e:
             logger.info(f"Пользователь {peer_id} временно недоступен из-за FloodWaitError: {e}")
-            return None
+            return Status(ok=False, message="FloodWaitError")
         except ValueError:
             logger.info(f"Пользователь {peer_id} не найден в кэше, обновляем диалоги...")
 
@@ -419,10 +451,10 @@ class Function:
                 return await client.get_entity(peer_id)
             except ValueError:
                 logger.info(f"Пользователь {peer_id} всё ещё недоступен после обновления кэша")
-                return None
+                return Status(ok=False, message="UserNotFound")
             except Exception as e:
                 logger.info(f"Ошибка при получении пользователя {peer_id}: {e}")
-                return None
+                return Status(ok=False, message="UnknownError")
 
     @staticmethod
     async def get_folders_chat(client: TelegramClient) -> list[dict[str, Any]] | None:

@@ -5,6 +5,7 @@ from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from telethon import TelegramClient, events  # type: ignore
 from telethon.tl.types import Chat, User  # type: ignore
 from utils.func import Function as fn  # noqa: N813
+from utils.func import Status
 
 
 def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_client: RedisClient) -> None:
@@ -45,7 +46,10 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
                 data_for_decision["already_exist"] = sender.username or sender.first_name
 
             chat = await fn.safe_get_entity(client, event.chat_id)
-            if not chat:
+            if isinstance(chat, Status):
+                bot_id = await redis_client.get("bot_id")
+                await fn.handle_status(session, chat, bot_id) if bot_id else None
+            if not chat or isinstance(chat, Status):
                 return
             if isinstance(chat, User):
                 logger.info(f"Записал на отработку человека с этого юзера: {sender.id} {sender.username}")

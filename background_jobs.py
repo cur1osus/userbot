@@ -9,6 +9,7 @@ from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from sqlalchemy import select
 from telethon import TelegramClient  # type: ignore
 from utils.func import Function as fn  # noqa: N813
+from utils.func import Status
 
 logger = logging.getLogger(__name__)
 minute: Final[int] = 60
@@ -48,6 +49,10 @@ async def handling_difference_update_chanel(
         channels = map(int, channels)
         for channel in channels:
             channel_entity = await fn.safe_get_entity(client, channel)
+            if isinstance(channel_entity, Status):
+                bot_id = await redis_client.get("bot_id")
+                await fn.handle_status(session, channel_entity, bot_id) if bot_id else None
+
             if not hasattr(channel_entity, "broadcast"):
                 continue
             updates = await fn.get_difference_update_channel(client, channel, redis_client)
@@ -71,7 +76,10 @@ async def handling_difference_update_chanel(
                     data_for_decision["not_mention"] = True
 
                 sender = await fn.safe_get_entity(client, mention)
-                if not sender:
+                if isinstance(sender, Status):
+                    bot_id = await redis_client.get("bot_id")
+                    await fn.handle_status(session, sender, bot_id) if bot_id else None
+                if not sender or isinstance(sender, Status):
                     return
 
                 banned_users = await fn.get_banned_usernames(session, redis_client)
