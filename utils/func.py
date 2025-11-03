@@ -11,6 +11,7 @@ from db.sqlalchemy.models import (
     BannedUser,
     Bot,
     IgnoredWord,
+    Job,
     KeyWord,
     MessageToAnswer,
     MonitoringChat,
@@ -405,7 +406,12 @@ class Function:
             return []
 
     @staticmethod
-    async def handle_status(session: AsyncSession, status: Status, bot_id: int):
+    async def handle_status(
+        session: AsyncSession,
+        status: Status,
+        bot_id: int,
+        channel: Any = None,
+    ):
         match status.message:
             case "ChannelPrivateError":
                 session.add(
@@ -481,7 +487,7 @@ class Function:
             users = []
             for peer in folder.get("pinned_peers", []):
                 user = await Function.safe_get_entity(client, peer)  # type: ignore
-                if not user:
+                if not user or isinstance(user, Status):
                     continue
                 users.append(
                     {

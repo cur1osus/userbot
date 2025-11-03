@@ -51,7 +51,7 @@ async def handling_difference_update_chanel(
             channel_entity = await fn.safe_get_entity(client, channel)
             if isinstance(channel_entity, Status):
                 bot_id = await redis_client.get("bot_id")
-                await fn.handle_status(session, channel_entity, bot_id) if bot_id else None
+                await fn.handle_status(session, channel_entity, bot_id, channel) if bot_id else None
 
             if not hasattr(channel_entity, "broadcast"):
                 continue
