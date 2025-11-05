@@ -54,7 +54,7 @@ async def handling_difference_update_chanel(
         for channel_id in channels_ids:
             channel_entity = await fn.safe_get_entity(client, channel_id)
             if isinstance(channel_entity, Status):
-                await fn.handle_status(session, channel_entity, bot_id, channel_id)
+                await fn.handle_status(sqlalchemy_client.session_factory, channel_entity, bot_id, channel_id)
 
             if not hasattr(channel_entity, "broadcast"):
                 continue
@@ -80,7 +80,7 @@ async def handling_difference_update_chanel(
 
                 sender = await fn.safe_get_entity(client, mention)
                 if isinstance(sender, Status):
-                    await fn.handle_status(session, sender, bot_id)
+                    await fn.handle_status(sqlalchemy_client.session_factory, sender, bot_id)
                 if not sender or isinstance(sender, Status):
                     return
 

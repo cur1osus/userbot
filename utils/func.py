@@ -19,7 +19,7 @@ from db.sqlalchemy.models import (
     UserManager,
 )
 from sqlalchemy import and_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telethon import TelegramClient, events, functions  # type: ignore
 from telethon.errors import ChannelPrivateError, FloodWaitError
 from telethon.tl.functions.channels import GetFullChannelRequest  # type: ignore
@@ -406,34 +406,36 @@ class Function:
 
     @staticmethod
     async def handle_status(
-        session: AsyncSession,
+        sessionmaker: async_sessionmaker[AsyncSession],
         status: Status,
         bot_id: int,
         channel: Any = None,
     ):
-        match status.message:
-            case "ChannelPrivateError":
-                session.add(
-                    Job(
-                        bot_id=bot_id,
-                        task="delete_private_channel",
-                        task_metadata=msgpack.packb(channel),
+        async with sessionmaker() as session:
+            match status.message:
+                case "ChannelPrivateError":
+                    session.add(
+                        Job(
+                            bot_id=bot_id,
+                            task="delete_private_channel",
+                            task_metadata=msgpack.packb(channel),
+                        )
                     )
-                )
-            case "ConnectionError":
-                session.add(
-                    Job(
-                        bot_id=bot_id,
-                        task="connection_error",
+                case "ConnectionError":
+                    session.add(
+                        Job(
+                            bot_id=bot_id,
+                            task="connection_error",
+                        )
                     )
-                )
-            case "FloodWaitError":
-                session.add(
-                    Job(
-                        bot_id=bot_id,
-                        task="flood_wait_error",
+                case "FloodWaitError":
+                    session.add(
+                        Job(
+                            bot_id=bot_id,
+                            task="flood_wait_error",
+                        )
                     )
-                )
+            await session.commit()
 
     @staticmethod
     async def safe_get_entity(client: TelegramClient, peer_id: int | str | None) -> Any | None:
