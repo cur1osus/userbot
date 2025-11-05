@@ -434,7 +434,7 @@ class Function:
                         Job(
                             bot_id=bot_id,
                             task="flood_wait_error",
-                            task_metadata=msgpack.packb({"time": status.data["time"]}),
+                            task_metadata=msgpack.packb(status.data),
                         )
                     )
             await session.commit()
