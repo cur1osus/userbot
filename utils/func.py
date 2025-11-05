@@ -2,7 +2,7 @@ import contextlib
 import logging
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import msgpack
@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 class Status:
     ok: bool
     message: str = ""
+    data: dict = field(default_factory=dict)
 
 
 class Function:
@@ -433,6 +434,7 @@ class Function:
                         Job(
                             bot_id=bot_id,
                             task="flood_wait_error",
+                            task_metadata=msgpack.packb({"time": status.data["time"]}),
                         )
                     )
             await session.commit()
@@ -452,7 +454,7 @@ class Function:
             return Status(ok=False, message="ConnectionError")
         except FloodWaitError as e:
             logger.info(f"Пользователь {peer_id} временно недоступен из-за FloodWaitError: {e}")
-            return Status(ok=False, message="FloodWaitError")
+            return Status(ok=False, message="FloodWaitError", data={"time": e.seconds})
         except ValueError:
             logger.info(f"Пользователь {peer_id} не найден в кэше, обновляем диалоги...")
 
