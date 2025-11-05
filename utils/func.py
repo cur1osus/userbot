@@ -151,8 +151,7 @@ class Function:
         return random.choice(r)
 
     @staticmethod
-    async def get_monitoring_chat(session: AsyncSession, redis_client: RedisClient) -> list[str]:
-        bot_id = await redis_client.get("bot_id")
+    async def get_monitoring_chat(session: AsyncSession, bot_id: int):
         return (await session.scalars(select(MonitoringChat.chat_id).where(MonitoringChat.bot_id == bot_id))).all()
 
     @staticmethod
@@ -428,9 +427,16 @@ class Function:
                         task="connection_error",
                     )
                 )
+            case "FloodWaitError":
+                session.add(
+                    Job(
+                        bot_id=bot_id,
+                        task="flood_wait_error",
+                    )
+                )
 
     @staticmethod
-    async def safe_get_entity(client: TelegramClient, peer_id: int | None) -> Any | None:
+    async def safe_get_entity(client: TelegramClient, peer_id: int | str | None) -> Any | None:
         if peer_id is None:
             return None
         try:

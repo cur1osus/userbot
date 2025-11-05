@@ -1,9 +1,11 @@
 import logging
-from typing import Any
+from typing import Any, TypeAlias
 
 import msgspec
 import redis.asyncio as redis
 from config.config import Config
+
+Value: TypeAlias = int | str | Any
 
 
 class RedisClient:
@@ -59,7 +61,7 @@ class RedisClient:
         else:
             await self.redis.set(self.key(key), serialized_data)
 
-    async def get(self, key: Any) -> Any | None:
+    async def get(self, key: Any) -> Value | None:
         """
         Извлекает данные из Redis и десериализует их с использованием msgspec.
 

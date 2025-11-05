@@ -1,6 +1,6 @@
 import datetime
 import logging
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import msgpack  # type: ignore
 from db.redis.redis_client import RedisClient
@@ -45,17 +45,20 @@ async def handling_difference_update_chanel(
         if not await fn.is_work(redis_client, session):
             logger.info("Анализ сообщений с канала остановлен")
             return
-        channels = await fn.get_monitoring_chat(session, redis_client)
-        channels = map(int, channels)
-        for channel in channels:
-            channel_entity = await fn.safe_get_entity(client, channel)
+        bot_id: int | None = await redis_client.get("bot_id")
+        if not bot_id:
+            logger.info("bot_id нет в redis")
+            return
+        channels_ids = await fn.get_monitoring_chat(session, bot_id)
+        channels_ids = map(int, channels_ids)
+        for channel_id in channels_ids:
+            channel_entity = await fn.safe_get_entity(client, channel_id)
             if isinstance(channel_entity, Status):
-                bot_id = await redis_client.get("bot_id")
-                await fn.handle_status(session, channel_entity, bot_id, channel) if bot_id else None
+                await fn.handle_status(session, channel_entity, bot_id, channel_id)
 
             if not hasattr(channel_entity, "broadcast"):
                 continue
-            updates = await fn.get_difference_update_channel(client, channel, redis_client)
+            updates = await fn.get_difference_update_channel(client, channel_id, redis_client)
             if not updates:
                 continue
             for update in updates:
@@ -77,8 +80,7 @@ async def handling_difference_update_chanel(
 
                 sender = await fn.safe_get_entity(client, mention)
                 if isinstance(sender, Status):
-                    bot_id = await redis_client.get("bot_id")
-                    await fn.handle_status(session, sender, bot_id) if bot_id else None
+                    await fn.handle_status(session, sender, bot_id)
                 if not sender or isinstance(sender, Status):
                     return
 
@@ -112,17 +114,19 @@ async def execute_jobs(
     sqlalchemy_client: SQLAlchemyClient,
 ) -> None:  # sourcery skip: for-index-underscore
     async with sqlalchemy_client.session_factory() as session:  # type ignore
-        jobs: list[Job] = await session.scalars(
-            select(Job).where(Job.answer.is_(None)),
+        jobs: list[Job] = list(
+            await session.scalars(
+                select(Job).where(Job.answer.is_(None)),
+            )
         )
         for job in jobs:
             if job.task == JobName.get_folders.value:
                 r = await task_func[JobName.get_folders](client)
-                job.answer = msgpack.packb(r)
+                job.answer = cast(int, msgpack.packb(r))
             if job.task == JobName.processed_users.value:
                 task_metadata = msgpack.unpackb(job.task_metadata)
                 r = await task_func[JobName.processed_users](client, task_metadata)
-                job.answer = msgpack.packb(r)
+                job.answer = cast(int, msgpack.packb(r))
             elif job.task == JobName.get_chat_title.value:
                 await task_func[JobName.get_chat_title](client, session, job.bot_id)
                 await session.delete(job)
