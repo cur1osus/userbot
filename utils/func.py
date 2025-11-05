@@ -528,7 +528,7 @@ class Function:
             bot.name = me.first_name
 
     @staticmethod
-    async def is_work(redis_client: RedisClient, session: AsyncSession, ttl: int = 60) -> bool:
+    async def is_work(redis_client: RedisClient, session: AsyncSession, ttl: int = 5) -> bool:
         if await redis_client.get("is_work"):
             return True
 
