@@ -406,38 +406,51 @@ class Function:
             return []
 
     @staticmethod
+    async def job_exists(
+        name: str,
+        bot_id: int,
+        session: AsyncSession,
+    ):
+        return bool(
+            await session.scalar(
+                select(Job.id).where(
+                    Job.bot_id == bot_id,
+                    Job.task == name,
+                )
+            )
+        )
+
+    @staticmethod
     async def handle_status(
         sessionmaker: async_sessionmaker[AsyncSession],
         status: Status,
         bot_id: int,
         channel: Any = None,
     ):
+        j = None
         async with sessionmaker() as session:
             match status.message:
                 case "ChannelPrivateError":
-                    session.add(
-                        Job(
-                            bot_id=bot_id,
-                            task="delete_private_channel",
-                            task_metadata=msgpack.packb(channel),
-                        )
+                    j = Job(
+                        bot_id=bot_id,
+                        task="delete_private_channel",
+                        task_metadata=msgpack.packb(channel),
                     )
+
                 case "ConnectionError":
-                    session.add(
-                        Job(
-                            bot_id=bot_id,
-                            task="connection_error",
-                        )
+                    j = Job(
+                        bot_id=bot_id,
+                        task="connection_error",
                     )
+
                 case "FloodWaitError":
-                    session.add(
-                        Job(
-                            bot_id=bot_id,
-                            task="flood_wait_error",
-                            task_metadata=msgpack.packb(status.data),
-                        )
+                    j = Job(
+                        bot_id=bot_id,
+                        task="flood_wait_error",
+                        task_metadata=msgpack.packb(status.data),
                     )
-            await session.commit()
+            if j and not await Function.job_exists(name=j.task, bot_id=j.bot_id, session=session):
+                await session.commit()
 
     @staticmethod
     async def safe_get_entity(client: TelegramClient, peer_id: int | str | None) -> Any | None:
