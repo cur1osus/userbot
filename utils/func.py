@@ -427,14 +427,16 @@ class Function:
         sessionmaker: async_sessionmaker[AsyncSession],
     ):
         async with sessionmaker() as session:
-            await session.delete(
+            r = (
                 await session.scalars(
                     select(Job).where(
                         Job.bot_id == bot_id,
                         Job.task == name,
                     )
                 )
-            )
+            ).all()
+            for job in r:
+                await session.delete(job)
             await session.commit()
 
     @staticmethod
