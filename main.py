@@ -7,7 +7,6 @@ from config.config import load_config
 from db.redis.redis_client import RedisClient
 from db.sqlalchemy.models import Bot
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
-from modules import new_msg, ping
 from scheduler import Scheduler
 from sqlalchemy import select
 from telethon import TelegramClient  # type: ignore
@@ -69,16 +68,6 @@ async def main() -> None:
     redis_client.id_bot = f"{bot.api_id}{bot.user_manager_id}"
     await redis_client.save("bot_id", bot.id)
     await redis_client.save("user_manager_id", bot.user_manager_id)
-    # Регистрация модулей
-    modules = [
-        ping.register,  # Передаем sqlalchemy_client
-        lambda c: new_msg.register(c, sqlalchemy_client, redis_client),
-    ]
-    for module in modules:
-        try:
-            module(client)
-        except Exception as e:
-            logger.exception(f"Ошибка при регистрации модуля {module.__doc__}: {e}")
 
     # Создание и настройка планировщика
     scheduler = Scheduler()

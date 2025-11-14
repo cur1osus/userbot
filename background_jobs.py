@@ -55,6 +55,7 @@ async def handling_difference_update_chanel(
             channel_entity = await fn.safe_get_entity(client, channel_id)
             if isinstance(channel_entity, Status):
                 await fn.handle_status(sqlalchemy_client.session_factory, channel_entity, bot_id, channel_id)
+                continue
 
             if not hasattr(channel_entity, "broadcast"):
                 continue
@@ -78,11 +79,15 @@ async def handling_difference_update_chanel(
                 if not mention:
                     data_for_decision["not_mention"] = True
 
+                if mention and mention.endswith("bot"):
+                    continue
+
                 sender = await fn.safe_get_entity(client, mention)
                 if isinstance(sender, Status):
                     await fn.handle_status(sqlalchemy_client.session_factory, sender, bot_id)
+                    continue
                 if not sender or isinstance(sender, Status):
-                    return
+                    continue
 
                 banned_users = await fn.get_banned_usernames(session, redis_client)
                 if sender.username and (f"@{sender.username}" in banned_users):
