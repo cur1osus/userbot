@@ -421,6 +421,23 @@ class Function:
         )
 
     @staticmethod
+    async def clean_jobs(
+        name: str,
+        bot_id: int,
+        sessionmaker: async_sessionmaker[AsyncSession],
+    ):
+        async with sessionmaker() as session:
+            await session.delete(
+                await session.scalars(
+                    select(Job).where(
+                        Job.bot_id == bot_id,
+                        Job.task == name,
+                    )
+                )
+            )
+            await session.commit()
+
+    @staticmethod
     async def handle_status(
         sessionmaker: async_sessionmaker[AsyncSession],
         status: Status,
@@ -450,6 +467,8 @@ class Function:
                         task_metadata=msgpack.packb(status.data),
                     )
             if j and not await Function.job_exists(name=j.task, bot_id=j.bot_id, session=session):
+                await Function.clean_jobs(name=j.task, bot_id=bot_id, sessionmaker=sessionmaker)
+                session.add(j)
                 await session.commit()
 
     @staticmethod
