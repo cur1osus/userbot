@@ -24,7 +24,9 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
                 logger.info("Отправка сообщения остановлена")
                 return
             bot_id = await redis_client.get("bot_id")
-            user = await fn.get_closer_data_user(session, bot_id)
+            if not bot_id:
+                return
+            user = await fn.get_closer_data_user(session, int(bot_id))
             if not user:
                 logger.info("----")
                 return
