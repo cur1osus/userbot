@@ -3,7 +3,7 @@ import logging
 import random
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import msgpack
 from db.redis.redis_client import RedisClient
@@ -60,8 +60,6 @@ class Function:
         message: str,
         data_for_decision: dict[str, Any] | None,
     ) -> None:
-        """Создаёт запись пользователя, если его ещё нет в базе."""
-
         bot_id = await redis_client.get("bot_id")
         user = UserAnalyzed(
             username=username,
@@ -71,7 +69,7 @@ class Function:
             bot_id=bot_id,
         )
         if data_for_decision:
-            user.decision = msgpack.packb(data_for_decision)
+            user.decision = cast(int, msgpack.packb(data_for_decision))
             user.accepted = False
 
         session.add(user)
@@ -294,7 +292,6 @@ class Function:
                     and_(
                         UserAnalyzed.username == username,
                         UserAnalyzed.accepted.is_(True),
-                        UserAnalyzed.sended.is_(True),
                     )
                 )
             )
