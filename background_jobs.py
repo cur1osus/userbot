@@ -120,8 +120,9 @@ async def execute_jobs(
                 select(Job).where(Job.answer.is_(None)),
             )
         )
+        user_manager_id = await redis_client.get("user_manager_id")
         for job in jobs:
-            await _process_job(job, client, session, redis_client.get("user_manager_id"))
+            await _process_job(job, client, session, user_manager_id)
         await session.commit()
 
 
@@ -278,4 +279,3 @@ async def _process_job(
             return
         user_manager.is_antiflood_mode = False
         job.answer = cast(bool, msgpack.packb(True))
-        await session.commit()
