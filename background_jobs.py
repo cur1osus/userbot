@@ -277,4 +277,5 @@ async def _process_job(
             logger.error("user_manager не найден в базе данных")
             return
         user_manager.is_antiflood_mode = False
+        job.answer = cast(bool, msgpack.packb(True))
         await session.commit()
