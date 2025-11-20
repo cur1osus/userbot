@@ -38,16 +38,34 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
         is_antiflood_mode = await session.scalar(
             select(UserManager.is_antiflood_mode).where(UserManager.id == user_manager_id)
         )
-        r = await fn.send_message_random(client, user, ans)
-        if isinstance(r, Status):
-            await fn.handle_status(
-                sessionmaker=sqlalchemy_client.session_factory,
-                status=r,
-                bot_id=int(bot_id),
-            )
-            return
-        if r:
-            logger.info(f"Сообщение было отправлено успешно {user.username}")
+        if is_antiflood_mode:
+            users = await fn.get_closer_data_users(session, int(bot_id), limit=30)
+            if len(users) >= 30:
+                users_to_text = ", \n".join([f"{user.username}" for user in users])
+                j = Job(
+                    task="send_pack_users",
+                    task_metadata=users_to_text,
+                    bot_id=bot_id,
+                )
+                session.add(j)
+
+                for user in users:
+                    user.sended = True
+
+                await session.commit()
+        else:
+            r = await fn.send_message_random(client, user, ans)
+            if isinstance(r, Status):
+                await fn.handle_status(
+                    sessionmaker=sqlalchemy_client.session_factory,
+                    status=r,
+                    bot_id=int(bot_id),
+                )
+                return
+            if r:
+                logger.info(f"Сообщение было отправлено успешно {user.username}")
+                user.sended = True
+                await session.commit()
 
 
 async def handling_difference_update_chanel(
