@@ -124,6 +124,7 @@ class UserManager(Base):
     username: Mapped[str] = mapped_column(String(50), nullable=True)
     users_per_minute: Mapped[int] = mapped_column(default=1)
     is_antiflood_mode: Mapped[bool] = mapped_column(default=False)
+    limit_pack: Mapped[int] = mapped_column(default=5)
 
     bots: Mapped[list["Bot"]] = relationship(
         back_populates="manager",

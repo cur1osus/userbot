@@ -38,12 +38,13 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
             logger.info("----")
             return
         ans = await fn.take_message_answer(redis_client, session)
-        is_antiflood_mode = await session.scalar(
-            select(UserManager.is_antiflood_mode).where(UserManager.id == user_manager_id)
-        )
-        if is_antiflood_mode:
-            users = await fn.get_closer_data_users(session, int(bot_id), limit=30)
-            if len(users) >= 30:
+        user_manager = await session.scalar(select(UserManager).where(UserManager.id == user_manager_id))
+        if not user_manager:
+            logger.info("User manager не найден в базе данных")
+            return
+        if user_manager.is_antiflood_mode:
+            users = await fn.get_closer_data_users(session, int(bot_id), limit=user_manager.limit_pack)
+            if len(users) >= user_manager.limit_pack:
                 users_to_text = ", \n".join([f"{user.username}" for user in users])
                 j = Job(
                     task="send_pack_users",
