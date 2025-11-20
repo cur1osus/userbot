@@ -45,7 +45,7 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
         if user_manager.is_antiflood_mode:
             users = await fn.get_closer_data_users(session, int(bot_id), limit=user_manager.limit_pack)
             if len(users) >= user_manager.limit_pack:
-                users_to_text = ", \n".join([f"{user.username}" for user in users])
+                users_to_text = "\n\n".join([f"{user.username}" for user in users])
                 j = Job(
                     task="send_pack_users",
                     task_metadata=msgpack.packb(users_to_text),
