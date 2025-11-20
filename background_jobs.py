@@ -1,16 +1,19 @@
 import datetime
 import logging
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import msgpack  # type: ignore
 from db.redis.redis_client import RedisClient
-from db.sqlalchemy.models import Job, JobName, UserManager
+from db.sqlalchemy.models import Job, JobName, UserAnalyzed, UserManager
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient  # type: ignore
 from utils.func import Function as fn  # noqa: N813
 from utils.func import Status
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 SECONDS_PER_MINUTE: Final[int] = 60
@@ -54,18 +57,14 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
 
                 await session.commit()
         else:
-            r = await fn.send_message_random(client, user, ans)
-            if isinstance(r, Status):
-                await fn.handle_status(
-                    sessionmaker=sqlalchemy_client.session_factory,
-                    status=r,
-                    bot_id=int(bot_id),
-                )
-                return
-            if r:
-                logger.info(f"Сообщение было отправлено успешно {user.username}")
-                user.sended = True
-                await session.commit()
+            await _send_message(
+                client,
+                user,
+                ans,
+                sqlalchemy_client.session_factory,
+                bot_id,
+            )
+            await session.commit()
 
 
 async def handling_difference_update_chanel(
@@ -94,6 +93,20 @@ async def handling_difference_update_chanel(
             )
 
 
+async def _send_message(client, user, ans, sessionmaker, bot_id):
+    r = await fn.send_message_random(client, user, ans)
+    if isinstance(r, Status):
+        await fn.handle_status(
+            sessionmaker=sessionmaker,
+            status=r,
+            bot_id=int(bot_id),
+        )
+        return
+    if r:
+        logger.info(f"Сообщение было отправлено успешно {user.username}")
+        user.sended = True
+
+
 async def execute_jobs(
     client: TelegramClient,
     redis_client: RedisClient,
@@ -107,7 +120,7 @@ async def execute_jobs(
             )
         )
         for job in jobs:
-            await _process_job(job, client, session)
+            await _process_job(job, client, session, redis_client.get("user_manager_id"))
         await session.commit()
 
 
@@ -222,7 +235,12 @@ def _build_decision_data(
     return decision_data or None
 
 
-async def _process_job(job: Job, client: TelegramClient, session: AsyncSession) -> None:
+async def _process_job(
+    job: Job,
+    client: TelegramClient,
+    session: AsyncSession,
+    user_manager_id: int | None = None,
+) -> None:
     if job.task == JobName.get_folders.value:
         result = await fn.get_folders_chat(client)
         job.answer = cast(int, msgpack.packb(result))
@@ -242,3 +260,20 @@ async def _process_job(job: Job, client: TelegramClient, session: AsyncSession) 
     if job.task == JobName.get_me_name.value:
         await fn.update_me_name(client, session, job.bot_id)
         await session.delete(job)
+
+    if job.task == "request_send_pack_users":
+        if user_manager_id is None:
+            logger.error("user_manager_id не найден в редисе")
+            return
+        usernames = msgpack.unpackb(job.task_metadata)
+        for username in usernames:
+            user_db = await session.scalar(select(UserAnalyzed).where(UserAnalyzed.username == username))
+            if user_db is None:
+                continue
+            user_db.sended = False
+        user_manager = await session.get(UserManager, user_manager_id)
+        if not user_manager:
+            logger.error("user_manager не найден в базе данных")
+            return
+        user_manager.is_antiflood_mode = False
+        await session.commit()
