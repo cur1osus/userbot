@@ -4,38 +4,50 @@ from typing import Any, Final, cast
 
 import msgpack  # type: ignore
 from db.redis.redis_client import RedisClient
-from db.sqlalchemy.models import Job, JobName
+from db.sqlalchemy.models import Job, JobName, UserManager
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient  # type: ignore
 from utils.func import Function as fn  # noqa: N813
 from utils.func import Status
 
 logger = logging.getLogger(__name__)
-minute: Final[int] = 60
+SECONDS_PER_MINUTE: Final[int] = 60
 
 
 async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client: SQLAlchemyClient) -> None:
+    """Отправка сообщения очередному пользователю с соблюдением лимита."""
     async with sqlalchemy_client.session_factory() as session:  # type ignore
         users_per_minute = await fn.get_users_per_minute(session, redis_client, cashed=True)
-        delay = minute // users_per_minute
-        if datetime.datetime.now().second % delay == 0:  # noqa: DTZ005
-            if not await fn.is_work(redis_client, session):
-                logger.info("Отправка сообщения остановлена")
-                return
-            bot_id = await redis_client.get("bot_id")
-            if not bot_id:
-                return
-            user = await fn.get_closer_data_user(session, int(bot_id))
-            if not user:
-                logger.info("----")
-                return
-            ans = await fn.take_message_answer(redis_client, session)
-            try:
-                await fn.send_message_random(client, user, ans)
-                logger.info(f"Сообщение было отправлено успешно {user.id_user}, {user.username}")
-            except Exception as e:
-                logger.info(f"Произошла ошибка при отправке сообщения: {e}\n")
+        delay = SECONDS_PER_MINUTE // users_per_minute
+        if not _should_send_now(delay):
+            return
+        if not await fn.is_work(redis_client, session):
+            logger.info("Отправка сообщения остановлена")
+            return
+        bot_id = await redis_client.get("bot_id")
+        user_manager_id = await redis_client.get("user_manager_id")
+        if not bot_id:
+            return
+        user = await fn.get_closer_data_user(session, int(bot_id))
+        if not user:
+            logger.info("----")
+            return
+        ans = await fn.take_message_answer(redis_client, session)
+        is_antiflood_mode = await session.scalar(
+            select(UserManager.is_antiflood_mode).where(UserManager.id == user_manager_id)
+        )
+        r = await fn.send_message_random(client, user, ans)
+        if isinstance(r, Status):
+            await fn.handle_status(
+                sessionmaker=sqlalchemy_client.session_factory,
+                status=r,
+                bot_id=int(bot_id),
+            )
+            return
+        if r:
+            logger.info(f"Сообщение было отправлено успешно {user.username}")
 
 
 async def handling_difference_update_chanel(
@@ -43,6 +55,7 @@ async def handling_difference_update_chanel(
     redis_client: RedisClient,
     sqlalchemy_client: SQLAlchemyClient,
 ) -> None:
+    """Обрабатывает новые сообщения в отслеживаемых каналах."""
     async with sqlalchemy_client.session_factory() as session:  # type ignore
         if not await fn.is_work(redis_client, session):
             logger.info("Анализ сообщений с канала остановлен")
@@ -51,68 +64,16 @@ async def handling_difference_update_chanel(
         if not bot_id:
             logger.info("bot_id нет в redis")
             return
-        channels_ids = await fn.get_monitoring_chat(session, bot_id)
-        channels_ids = map(int, channels_ids)
-        for channel_id in channels_ids:
-            channel_entity = await fn.safe_get_entity(client, channel_id)
-            if isinstance(channel_entity, Status):
-                await fn.handle_status(sqlalchemy_client.session_factory, channel_entity, bot_id, channel_id)
-                continue
-
-            if not hasattr(channel_entity, "broadcast"):
-                continue
-            updates = await fn.get_difference_update_channel(client, channel_id, redis_client)
-            if not updates:
-                continue
-            for update in updates:
-                msg_text = update.message
-                triggers = await fn.get_keywords(session, redis_client, cashed=True)
-                excludes = await fn.get_ignored_words(session, redis_client, cashed=True)
-                data_for_decision = {}
-
-                is_acceptable, list_ignore_for_decision, list_trigger_for_decision = await fn.is_acceptable_message(
-                    msg_text, triggers, excludes
-                )
-                if not is_acceptable:
-                    data_for_decision["ignores"] = list_ignore_for_decision
-                    data_for_decision["triggers"] = list_trigger_for_decision
-
-                mention = await fn.parse_mention(update.message)
-                if not mention:
-                    data_for_decision["not_mention"] = True
-
-                if mention and mention.endswith("bot"):
-                    continue
-
-                sender = await fn.safe_get_entity(client, mention)
-                if isinstance(sender, Status):
-                    await fn.handle_status(sqlalchemy_client.session_factory, sender, bot_id)
-                    continue
-                if not sender or isinstance(sender, Status):
-                    continue
-
-                banned_users = await fn.get_banned_usernames(session, redis_client)
-                if sender.username and (f"@{sender.username}" in banned_users):
-                    data_for_decision["banned"] = f"@{sender.username}"
-                    data_for_decision["ignores"] = list_ignore_for_decision
-                    data_for_decision["triggers"] = list_trigger_for_decision
-
-                if await fn.user_exist(sender.id, session):
-                    data_for_decision["already_exist"] = sender.username or sender.first_name
-                    data_for_decision["ignores"] = list_ignore_for_decision
-                    data_for_decision["triggers"] = list_trigger_for_decision
-
-                data_for_decision = data_for_decision if len(data_for_decision) > 0 else None
-
-                await fn.add_user_v2(sender, update, session, redis_client, data_for_decision)
-
-
-task_func = {
-    JobName.get_folders: fn.get_folders_chat,
-    JobName.processed_users: fn.get_processed_users,
-    JobName.get_chat_title: fn.update_chat_title,
-    JobName.get_me_name: fn.update_me_name,
-}
+        channel_ids = map(int, await fn.get_monitoring_chat(session, bot_id))
+        for channel_id in channel_ids:
+            await _process_channel_updates(
+                client=client,
+                redis_client=redis_client,
+                sqlalchemy_client=sqlalchemy_client,
+                session=session,
+                bot_id=bot_id,
+                channel_id=channel_id,
+            )
 
 
 async def execute_jobs(
@@ -120,6 +81,7 @@ async def execute_jobs(
     redis_client: RedisClient,
     sqlalchemy_client: SQLAlchemyClient,
 ) -> None:  # sourcery skip: for-index-underscore
+    """Выполняет отложенные задания из таблицы jobs."""
     async with sqlalchemy_client.session_factory() as session:  # type ignore
         jobs: list[Job] = list(
             await session.scalars(
@@ -127,17 +89,138 @@ async def execute_jobs(
             )
         )
         for job in jobs:
-            if job.task == JobName.get_folders.value:
-                r = await task_func[JobName.get_folders](client)
-                job.answer = cast(int, msgpack.packb(r))
-            if job.task == JobName.processed_users.value:
-                task_metadata = msgpack.unpackb(job.task_metadata)
-                r = await task_func[JobName.processed_users](client, task_metadata)
-                job.answer = cast(int, msgpack.packb(r))
-            elif job.task == JobName.get_chat_title.value:
-                await task_func[JobName.get_chat_title](client, session, job.bot_id)
-                await session.delete(job)
-            elif job.task == JobName.get_me_name.value:
-                await task_func[JobName.get_me_name](client, session, job.bot_id)
-                await session.delete(job)
+            await _process_job(job, client, session)
         await session.commit()
+
+
+def _should_send_now(delay_seconds: int) -> bool:
+    """Сигнализирует, настало ли время отправки сообщения."""
+    return datetime.datetime.now().second % delay_seconds == 0  # noqa: DTZ005
+
+
+async def _process_channel_updates(
+    *,
+    client: TelegramClient,
+    redis_client: RedisClient,
+    sqlalchemy_client: SQLAlchemyClient,
+    session: AsyncSession,
+    bot_id: int,
+    channel_id: int,
+) -> None:
+    channel_entity = await fn.safe_get_entity(client, channel_id)
+    if isinstance(channel_entity, Status):
+        await fn.handle_status(sqlalchemy_client.session_factory, channel_entity, bot_id, channel_id)
+        return
+
+    if not hasattr(channel_entity, "broadcast"):
+        return
+
+    updates = await fn.get_difference_update_channel(client, channel_id, redis_client)
+    if not updates:
+        return
+
+    for update in updates:
+        await _process_update(
+            update=update,
+            client=client,
+            sqlalchemy_client=sqlalchemy_client,
+            session=session,
+            redis_client=redis_client,
+            bot_id=bot_id,
+        )
+
+
+async def _process_update(
+    *,
+    update: Any,
+    client: TelegramClient,
+    sqlalchemy_client: SQLAlchemyClient,
+    session: AsyncSession,
+    redis_client: RedisClient,
+    bot_id: int,
+) -> None:
+    msg_text = update.message
+    triggers = await fn.get_keywords(session, redis_client, cashed=True)
+    excludes = await fn.get_ignored_words(session, redis_client, cashed=True)
+
+    is_acceptable, ignores, triggers_found = await fn.is_acceptable_message(msg_text, triggers, excludes)
+    mention = await fn.parse_mention(update.message)
+
+    if not mention or mention.endswith("bot"):
+        return
+
+    username = f"@{mention}"
+
+    banned_username = None
+    banned_users = await fn.get_banned_usernames(session, redis_client)
+    if username in banned_users:
+        banned_username = username
+
+    existing_user = None
+    if await fn.user_exist(username, session):
+        existing_user = username
+
+    data_for_decision = _build_decision_data(
+        is_acceptable=is_acceptable,
+        ignores=ignores,
+        triggers=triggers_found,
+        mention=mention,
+        banned_username=banned_username,
+        existing_user=existing_user,
+    )
+
+    await fn.add_user_v2(username, update, session, redis_client, data_for_decision)
+
+
+def _build_decision_data(
+    *,
+    is_acceptable: bool,
+    ignores: list[str],
+    triggers: list[str],
+    mention: str | None,
+    banned_username: str | None,
+    existing_user: str | None,
+) -> dict[str, Any] | None:
+    """Собирает данные, объясняющие, почему пользователь требует ручного решения."""
+    decision_data: dict[str, Any] = {}
+
+    if not is_acceptable:
+        decision_data["ignores"] = ignores
+        decision_data["triggers"] = triggers
+
+    if mention is None:
+        decision_data["not_mention"] = True
+
+    if banned_username:
+        decision_data["banned"] = banned_username
+        decision_data["ignores"] = ignores
+        decision_data["triggers"] = triggers
+
+    if existing_user:
+        decision_data["already_exist"] = existing_user
+        decision_data["ignores"] = ignores
+        decision_data["triggers"] = triggers
+
+    return decision_data or None
+
+
+async def _process_job(job: Job, client: TelegramClient, session: AsyncSession) -> None:
+    if job.task == JobName.get_folders.value:
+        result = await fn.get_folders_chat(client)
+        job.answer = cast(int, msgpack.packb(result))
+        return
+
+    if job.task == JobName.processed_users.value:
+        task_metadata = msgpack.unpackb(job.task_metadata)
+        result = await fn.get_processed_users(client, task_metadata)
+        job.answer = cast(int, msgpack.packb(result))
+        return
+
+    if job.task == JobName.get_chat_title.value:
+        await fn.update_chat_title(client, session, job.bot_id)
+        await session.delete(job)
+        return
+
+    if job.task == JobName.get_me_name.value:
+        await fn.update_me_name(client, session, job.bot_id)
+        await session.delete(job)

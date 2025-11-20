@@ -65,7 +65,7 @@ async def main() -> None:
     except Exception as e:
         logger.exception(f"Ошибка при инициализации клиента: {e}")
         exit()
-    redis_client.id_bot = f"{bot.api_id}{bot.user_manager_id}"
+    redis_client.bot_id = f"{bot.api_id}{bot.user_manager_id}"
     await redis_client.save("bot_id", bot.id)
     await redis_client.save("user_manager_id", bot.user_manager_id)
 

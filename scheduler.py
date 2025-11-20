@@ -331,7 +331,8 @@ class Job:
             self.cancel_after = datetime.datetime.combine(datetime.datetime.now(), until_time)
         elif isinstance(until_time, str):
             cancel_after = self._decode_datetimestr(
-                until_time, ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%H:%M:%S", "%H:%M"],
+                until_time,
+                ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%H:%M:%S", "%H:%M"],
             )
             if cancel_after is None:
                 raise ScheduleValueError("Invalid string format for until()")

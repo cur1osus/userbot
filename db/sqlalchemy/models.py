@@ -69,7 +69,7 @@ class UserAnalyzed(Base):
     bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"), nullable=True)
     bot: Mapped[Bot] = relationship(back_populates="users_analyzed")
 
-    id_user: Mapped[int] = mapped_column(BigInteger, unique=True)
+    # id_user: Mapped[int] = mapped_column(BigInteger, unique=True)
     username: Mapped[str] = mapped_column(String(50), nullable=True)
     message_id: Mapped[str] = mapped_column(String(50), nullable=True)
     chat_id: Mapped[str] = mapped_column(String(50), nullable=True)
@@ -123,6 +123,7 @@ class UserManager(Base):
     id_user: Mapped[int] = mapped_column(BigInteger, unique=True)
     username: Mapped[str] = mapped_column(String(50), nullable=True)
     users_per_minute: Mapped[int] = mapped_column(default=1)
+    is_antiflood_mode: Mapped[bool] = mapped_column(default=False)
 
     bots: Mapped[list["Bot"]] = relationship(
         back_populates="manager",

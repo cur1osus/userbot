@@ -22,6 +22,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telethon import TelegramClient, events, functions  # type: ignore
 from telethon.errors import ChannelPrivateError, FloodWaitError
+from telethon.hints import Entity, EntityLike
 from telethon.tl.functions.channels import GetFullChannelRequest  # type: ignore
 from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.functions.updates import GetChannelDifferenceRequest  # type: ignore
@@ -49,6 +50,34 @@ class Status:
 
 class Function:
     @staticmethod
+    async def _create_user_record(
+        *,
+        session: AsyncSession,
+        redis_client: RedisClient,
+        username: str,
+        message_id: int,
+        chat_id: int,
+        message: str,
+        data_for_decision: dict[str, Any] | None,
+    ) -> None:
+        """Создаёт запись пользователя, если его ещё нет в базе."""
+
+        bot_id = await redis_client.get("bot_id")
+        user = UserAnalyzed(
+            username=username,
+            message_id=message_id,
+            chat_id=chat_id,
+            additional_message=message,
+            bot_id=bot_id,
+        )
+        if data_for_decision:
+            user.decision = msgpack.packb(data_for_decision)
+            user.accepted = False
+
+        session.add(user)
+        await session.commit()
+
+    @staticmethod
     async def get_closer_data_user(session: AsyncSession, bot_id: int) -> UserAnalyzed | None:
         user = await session.scalar(
             select(UserAnalyzed)
@@ -63,28 +92,34 @@ class Function:
             .limit(1),
         )
 
-        if not user:
-            return None
-        user.sended = True
-        await session.commit()
         return user
 
     @staticmethod
-    async def send_message_two(client: TelegramClient, user: UserAnalyzed, ans: str) -> None:
-        await client.send_message(entity=user.id_user, message=ans)
+    async def send_message_two(
+        client: TelegramClient,
+        user: UserAnalyzed,
+        id_user: int,
+        ans: str,
+    ) -> None:
+        await client.send_message(entity=id_user, message=ans)
         await client.forward_messages(
-            entity=user.id_user,
+            entity=id_user,
             messages=int(user.message_id),
             from_peer=int(user.chat_id),
         )
 
     @staticmethod
-    async def send_message_four(client: Any, user: UserAnalyzed, ans: str) -> None:
+    async def send_message_four(
+        client: Any,
+        user: UserAnalyzed,
+        id_user: int,
+        ans: str,
+    ) -> None:
         ans = f"{user.additional_message}\n\n{ans}"
-        await client.send_message(entity=user.id_user, message=ans)
+        await client.send_message(entity=id_user, message=ans)
 
     @staticmethod
-    async def send_message_random(client: Any, user: UserAnalyzed, ans: str) -> None:
+    async def send_message_random(client: Any, user: UserAnalyzed, ans: str) -> bool | Status:
         func = random.choices(
             population=[
                 Function.send_message_two,
@@ -93,7 +128,16 @@ class Function:
             weights=[0.10, 0.90],
         )[0]
 
-        await func(client, user, ans)
+        entity = await Function.safe_get_entity(client, user.username)
+        if isinstance(entity, Status):
+            return entity
+        f = False
+        try:
+            await func(client, user, entity.id, ans)
+            f = True
+        except Exception as e:
+            logger.error(f"Ошибка при отправке сообщения: {e}")
+        return f
 
     @staticmethod
     async def parse_mention(text: str) -> str | None:
@@ -220,14 +264,14 @@ class Function:
 
     @staticmethod
     async def user_exist(
-        id_user: int,
+        username: str,
         session: AsyncSession,
     ) -> bool:
         return bool(
             await session.scalar(
                 select(UserAnalyzed).where(
                     and_(
-                        UserAnalyzed.id_user == id_user,
+                        UserAnalyzed.username == username,
                         UserAnalyzed.accepted.is_(True),
                         UserAnalyzed.sended.is_(True),
                     )
@@ -237,61 +281,39 @@ class Function:
 
     @staticmethod
     async def add_user(
-        sender: Any,
+        username: str,
         event: events.NewMessage.Event,
         session: AsyncSession,
         redis_client: RedisClient,
         data_for_decision: dict[str, Any] | None,
     ) -> None:
-        message = event.message.message
-        bot_id = await redis_client.get("bot_id")
-
-        if r := await session.scalar(select(UserAnalyzed).where(UserAnalyzed.id_user == sender.id)):
-            return
-
-        user = UserAnalyzed(
-            id_user=sender.id,
+        await Function._create_user_record(
+            session=session,
+            redis_client=redis_client,
+            username=username,
             message_id=event.message.id,
             chat_id=event.chat_id,
-            additional_message=message,
-            bot_id=bot_id,
+            message=event.message.message,
+            data_for_decision=data_for_decision,
         )
-        if data_for_decision:
-            user.decision = msgpack.packb(data_for_decision)
-            user.accepted = False
-        if r := sender.username:
-            user.username = r
-        session.add(user)
-        await session.commit()
 
     @staticmethod
     async def add_user_v2(
-        sender: Any,
+        username: str,
         update: Message,
         session: AsyncSession,
         redis_client: RedisClient,
         data_for_decision: dict[str, Any] | None,
     ) -> None:
-        message = update.message
-        bot_id = await redis_client.get("bot_id")
-
-        if r := await session.scalar(select(UserAnalyzed).where(UserAnalyzed.id_user == sender.id)):
-            return
-
-        user = UserAnalyzed(
-            id_user=sender.id,
+        await Function._create_user_record(
+            session=session,
+            redis_client=redis_client,
+            username=username,
             message_id=update.id,
             chat_id=update.peer_id.channel_id,
-            additional_message=message,
-            bot_id=bot_id,
+            message=update.message,
+            data_for_decision=data_for_decision,
         )
-        if data_for_decision:
-            user.decision = msgpack.packb(data_for_decision)
-            user.accepted = False
-        if r := sender.username:
-            user.username = r
-        session.add(user)
-        await session.commit()
 
     @staticmethod
     async def get_difference_update_channel(
@@ -473,7 +495,7 @@ class Function:
                 await session.commit()
 
     @staticmethod
-    async def safe_get_entity(client: TelegramClient, peer_id: int | str | None) -> Any | None:
+    async def safe_get_entity(client: TelegramClient, peer_id: EntityLike) -> Entity | list[Entity] | Status | None:
         if peer_id is None:
             return None
         try:

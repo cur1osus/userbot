@@ -16,7 +16,7 @@ class RedisClient:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.redis: redis.Redis | None = None
-        self.id_bot = None
+        self.bot_id: int | None = None
         self.logger = logging.getLogger(__name__)
         self.encoder = msgspec.json.Encoder()
         self.decoder = msgspec.json.Decoder()
@@ -43,7 +43,7 @@ class RedisClient:
             self.logger.info("Redis отключен")
 
     def key(self, key: str | int) -> str:
-        return f"{self.prefix}:{self.id_bot}:{key}"
+        return f"{self.prefix}:{self.bot_id}:{key}"
 
     async def save(self, key: Any, value: Any, ttl: int | None = None) -> None:
         """
