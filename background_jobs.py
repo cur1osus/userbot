@@ -48,7 +48,7 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
                 users_to_text = ", \n".join([f"{user.username}" for user in users])
                 j = Job(
                     task="send_pack_users",
-                    task_metadata=users_to_text,
+                    task_metadata=msgpack.packb(users_to_text),
                     bot_id=bot_id,
                 )
                 session.add(j)
