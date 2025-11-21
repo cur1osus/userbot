@@ -286,16 +286,7 @@ class Function:
         username: str,
         session: AsyncSession,
     ) -> bool:
-        return bool(
-            await session.scalar(
-                select(UserAnalyzed).where(
-                    and_(
-                        UserAnalyzed.username == username,
-                        UserAnalyzed.accepted.is_(True),
-                    )
-                )
-            )
-        )
+        return bool(await session.scalar(select(UserAnalyzed).where(UserAnalyzed.username == username)))
 
     @staticmethod
     async def add_user(

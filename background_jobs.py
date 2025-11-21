@@ -175,9 +175,8 @@ async def _process_update(
     if username in banned_users:
         banned_username = username
 
-    existing_user = None
     if await fn.user_exist(username, session):
-        existing_user = username
+        return
 
     data_for_decision = _build_decision_data(
         is_acceptable=is_acceptable,
@@ -185,20 +184,13 @@ async def _process_update(
         triggers=triggers_found,
         mention=mention,
         banned_username=banned_username,
-        existing_user=existing_user,
     )
 
     await fn.add_user_v2(username, update, session, redis_client, data_for_decision)
 
 
 def _build_decision_data(
-    *,
-    is_acceptable: bool,
-    ignores: list[str],
-    triggers: list[str],
-    mention: str | None,
-    banned_username: str | None,
-    existing_user: str | None,
+    *, is_acceptable: bool, ignores: list[str], triggers: list[str], mention: str | None, banned_username: str | None
 ) -> dict[str, Any] | None:
     """Собирает данные, объясняющие, почему пользователь требует ручного решения."""
     decision_data: dict[str, Any] = {}
@@ -212,11 +204,6 @@ def _build_decision_data(
 
     if banned_username:
         decision_data["banned"] = banned_username
-        decision_data["ignores"] = ignores
-        decision_data["triggers"] = triggers
-
-    if existing_user:
-        decision_data["already_exist"] = existing_user
         decision_data["ignores"] = ignores
         decision_data["triggers"] = triggers
 
