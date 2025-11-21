@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import msgpack  # type: ignore
 from db.redis.redis_client import RedisClient
-from db.sqlalchemy.models import Job, JobName, UserAnalyzed, UserManager
+from db.sqlalchemy.models import Job, JobName, UserManager
 from db.sqlalchemy.sqlalchemy_client import SQLAlchemyClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,8 +29,14 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
         if not await fn.is_work(redis_client, session):
             logger.info("Отправка сообщения остановлена")
             return
-        bot_id = await redis_client.get("bot_id")
         user_manager_id = await redis_client.get("user_manager_id")
+        user_manager = await session.scalar(select(UserManager).where(UserManager.id == user_manager_id))
+        if not user_manager:
+            logger.info("User manager не найден в базе данных")
+            return
+        if user_manager.is_antiflood_mode:
+            return
+        bot_id = await redis_client.get("bot_id")
         if not bot_id:
             return
         user = await fn.get_closer_data_user(session, int(bot_id))
@@ -38,34 +44,14 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
             logger.info("----")
             return
         ans = await fn.take_message_answer(redis_client, session)
-        user_manager = await session.scalar(select(UserManager).where(UserManager.id == user_manager_id))
-        if not user_manager:
-            logger.info("User manager не найден в базе данных")
-            return
-        if user_manager.is_antiflood_mode:
-            users = await fn.get_closer_data_users(session, int(bot_id), limit=user_manager.limit_pack)
-            if len(users) >= user_manager.limit_pack:
-                users_to_text = "\n\n".join([f"{user.username}" for user in users])
-                j = Job(
-                    task="send_pack_users",
-                    task_metadata=msgpack.packb(users_to_text),
-                    bot_id=bot_id,
-                )
-                session.add(j)
-
-                for user in users:
-                    user.sended = True
-
-                await session.commit()
-        else:
-            await _send_message(
-                client,
-                user,
-                ans,
-                sqlalchemy_client.session_factory,
-                bot_id,
-            )
-            await session.commit()
+        await _send_message(
+            client,
+            user,
+            ans,
+            sqlalchemy_client.session_factory,
+            bot_id,
+        )
+        await session.commit()
 
 
 async def handling_difference_update_chanel(
@@ -262,20 +248,3 @@ async def _process_job(
     if job.task == JobName.get_me_name.value:
         await fn.update_me_name(client, session, job.bot_id)
         await session.delete(job)
-
-    if job.task == "request_send_pack_users":
-        if user_manager_id is None:
-            logger.error("user_manager_id не найден в редисе")
-            return
-        usernames = msgpack.unpackb(job.task_metadata)
-        for username in usernames:
-            user_db = await session.scalar(select(UserAnalyzed).where(UserAnalyzed.username == username))
-            if user_db is None:
-                continue
-            user_db.sended = False
-        user_manager = await session.get(UserManager, user_manager_id)
-        if not user_manager:
-            logger.error("user_manager не найден в базе данных")
-            return
-        user_manager.is_antiflood_mode = False
-        job.answer = cast(bool, msgpack.packb(True))
