@@ -146,6 +146,7 @@ class Function:
         session: AsyncSession,
         redis_client: RedisClient,
     ) -> bool | Status:
+        send_attempt_key = Function._build_send_attempt_key(user)
         func = random.choices(
             population=[
                 Function.send_message_two,
@@ -167,8 +168,15 @@ class Function:
         try:
             await func(client, user, entity.id, ans)
             f = True
+            await Function._reset_send_attempts(redis_client=redis_client, attempts_key=send_attempt_key)
         except Exception as e:
             logger.error(f"Ошибка при отправке сообщения: {e}")
+            await Function._handle_failed_send_message(
+                redis_client=redis_client,
+                session=session,
+                user=user,
+                attempts_key=send_attempt_key,
+            )
         return f
 
     @staticmethod
@@ -606,6 +614,46 @@ class Function:
                 peer_id=peer_id,
                 attempts_key=key,
             )
+
+    @staticmethod
+    def _build_send_attempt_key(user: UserAnalyzed) -> str:
+        identifier = user.id or user.username or user.message_id or user.chat_id or "unknown"
+        return f"send_message:user:{identifier}"
+
+    @staticmethod
+    async def _reset_send_attempts(redis_client: RedisClient | None, attempts_key: str | None) -> None:
+        if redis_client and attempts_key:
+            await redis_client.delete(attempts_key)
+
+    @staticmethod
+    async def _handle_failed_send_message(
+        *,
+        redis_client: RedisClient | None,
+        session: AsyncSession | None,
+        user: UserAnalyzed,
+        attempts_key: str | None,
+    ) -> None:
+        if not redis_client or not attempts_key:
+            return
+
+        attempts_raw = await redis_client.get(attempts_key)
+        try:
+            attempts = int(attempts_raw) + 1 if attempts_raw is not None else 1
+        except (TypeError, ValueError):
+            attempts = 1
+
+        await redis_client.save(attempts_key, attempts)
+
+        if attempts < 3 or not session:
+            return
+
+        await session.delete(user)
+        await session.commit()
+        await redis_client.delete(attempts_key)
+        logger.info(
+            "Удалён пользователь %s после 3 неудачных попыток отправки",
+            user.username or user.id,
+        )
 
     @staticmethod
     async def safe_get_entity(
