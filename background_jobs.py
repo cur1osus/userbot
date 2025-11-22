@@ -50,6 +50,8 @@ async def send_message(client: Any, redis_client: RedisClient, sqlalchemy_client
             ans,
             sqlalchemy_client.session_factory,
             bot_id,
+            session,
+            redis_client,
         )
         await session.commit()
 
@@ -80,8 +82,8 @@ async def handling_difference_update_chanel(
             )
 
 
-async def _send_message(client, user, ans, sessionmaker, bot_id):
-    r = await fn.send_message_random(client, user, ans)
+async def _send_message(client, user, ans, sessionmaker, bot_id, session, redis_client):
+    r = await fn.send_message_random(client, user, ans, session=session, redis_client=redis_client)
     if isinstance(r, Status):
         await fn.handle_status(
             sessionmaker=sessionmaker,
@@ -126,7 +128,13 @@ async def _process_channel_updates(
     bot_id: int,
     channel_id: int,
 ) -> None:
-    channel_entity = await fn.safe_get_entity(client, channel_id)
+    channel_entity = await fn.safe_get_entity(
+        client,
+        channel_id,
+        redis_client=redis_client,
+        session=session,
+        target="monitoring_chat",
+    )
     if isinstance(channel_entity, Status):
         await fn.handle_status(sqlalchemy_client.session_factory, channel_entity, bot_id, channel_id)
         return

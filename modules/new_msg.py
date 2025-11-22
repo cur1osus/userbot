@@ -45,7 +45,13 @@ def register(client: TelegramClient, sqlalchemy_client: SQLAlchemyClient, redis_
             if await fn.user_exist(sender.id, session):
                 data_for_decision["already_exist"] = sender.username or sender.first_name
 
-            chat = await fn.safe_get_entity(client, event.chat_id)
+            chat = await fn.safe_get_entity(
+                client,
+                event.chat_id,
+                redis_client=redis_client,
+                session=session,
+                target="monitoring_chat",
+            )
             if isinstance(chat, Status):
                 bot_id = await redis_client.get("bot_id")
                 await fn.handle_status(session, chat, bot_id) if bot_id else None

@@ -3,7 +3,7 @@ import logging
 import random
 import re
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import msgpack
 from db.redis.redis_client import RedisClient
@@ -138,7 +138,14 @@ class Function:
         await client.send_message(entity=id_user, message=ans)
 
     @staticmethod
-    async def send_message_random(client: Any, user: UserAnalyzed, ans: str) -> bool | Status:
+    async def send_message_random(
+        client: Any,
+        user: UserAnalyzed,
+        ans: str,
+        *,
+        session: AsyncSession,
+        redis_client: RedisClient,
+    ) -> bool | Status:
         func = random.choices(
             population=[
                 Function.send_message_two,
@@ -147,7 +154,13 @@ class Function:
             weights=[0.10, 0.90],
         )[0]
 
-        entity = await Function.safe_get_entity(client, user.username)
+        entity = await Function.safe_get_entity(
+            client,
+            user.username,
+            redis_client=redis_client,
+            session=session,
+            target="user",
+        )
         if isinstance(entity, Status):
             return entity
         f = False
@@ -504,14 +517,119 @@ class Function:
                 await session.commit()
 
     @staticmethod
-    async def safe_get_entity(client: TelegramClient, peer_id: EntityLike) -> Entity | list[Entity] | Status | None:
+    def _build_attempt_key(peer_id: EntityLike, target: Literal["user", "monitoring_chat"] | None) -> str | None:
+        return f"safe_get_entity:{target}:{peer_id}" if target else None
+
+    @staticmethod
+    async def _reset_entity_attempts(
+        *,
+        redis_client: RedisClient | None,
+        peer_id: EntityLike,
+        target: Literal["user", "monitoring_chat"] | None,
+    ) -> None:
+        key = Function._build_attempt_key(peer_id, target)
+        if redis_client and key:
+            await redis_client.delete(key)
+
+    @staticmethod
+    async def _delete_unavailable_entity(
+        *,
+        session: AsyncSession | None,
+        redis_client: RedisClient,
+        target: Literal["user", "monitoring_chat"],
+        peer_id: EntityLike,
+        attempts_key: str,
+    ) -> None:
+        if not session:
+            logger.warning("Невозможно удалить запись без сессии БД")
+            return
+
+        bot_id = None
+        with contextlib.suppress(Exception):
+            bot_id = await redis_client.get("bot_id")
+            bot_id = int(bot_id) if bot_id is not None else None
+
+        peer_value = str(peer_id)
+        stmt = None
+        if target == "user":
+            stmt = select(UserAnalyzed).where(UserAnalyzed.username == peer_value)
+            if bot_id is not None:
+                stmt = stmt.where(UserAnalyzed.bot_id == bot_id)
+        elif target == "monitoring_chat":
+            stmt = select(MonitoringChat).where(MonitoringChat.chat_id == peer_value)
+            if bot_id is not None:
+                stmt = stmt.where(MonitoringChat.bot_id == bot_id)
+
+        if stmt is None:
+            return
+
+        record = await session.scalar(stmt)
+        if not record:
+            with contextlib.suppress(Exception):
+                await redis_client.delete(attempts_key)
+            return
+
+        await session.delete(record)
+        await session.commit()
+        with contextlib.suppress(Exception):
+            await redis_client.delete(attempts_key)
+        logger.info("Удалена запись %s для peer_id=%s после 3 неудачных попыток", target, peer_value)
+
+    @staticmethod
+    async def _handle_failed_entity_fetch(
+        *,
+        redis_client: RedisClient | None,
+        session: AsyncSession | None,
+        peer_id: EntityLike,
+        target: Literal["user", "monitoring_chat"] | None,
+    ) -> None:
+        if not redis_client or not target:
+            return
+
+        key = Function._build_attempt_key(peer_id, target)
+        if not key:
+            return
+
+        attempts_raw = await redis_client.get(key)
+        try:
+            attempts = int(attempts_raw) + 1 if attempts_raw is not None else 1
+        except (TypeError, ValueError):
+            attempts = 1
+
+        await redis_client.save(key, attempts)
+
+        if attempts >= 3:
+            await Function._delete_unavailable_entity(
+                session=session,
+                redis_client=redis_client,
+                target=target,
+                peer_id=peer_id,
+                attempts_key=key,
+            )
+
+    @staticmethod
+    async def safe_get_entity(
+        client: TelegramClient,
+        peer_id: EntityLike,
+        redis_client: RedisClient | None = None,
+        session: AsyncSession | None = None,
+        target: Literal["user", "monitoring_chat"] | None = None,
+    ) -> Entity | list[Entity] | Status | None:
         if peer_id is None:
             return None
         try:
             # Сначала пробуем получить пользователя напрямую
-            return await client.get_entity(peer_id)
+            entity = await client.get_entity(peer_id)
+            await Function._reset_entity_attempts(redis_client=redis_client, peer_id=peer_id, target=target)
+            return entity
         except ChannelPrivateError:
             logger.error(f"Ошибка при получении пользователя {peer_id}: ChannelPrivateError")
+            await Function._handle_failed_entity_fetch(
+                redis_client=redis_client,
+                session=session,
+                peer_id=peer_id,
+                target=target,
+            )
             return Status(ok=False, message="ChannelPrivateError")
         except ConnectionError as e:
             logger.error(f"Ошибка при получении пользователя {peer_id}: {e}")
@@ -528,12 +646,26 @@ class Function:
                 await client.catch_up()
 
                 # Пробуем снова после обновления кэша
-                return await client.get_entity(peer_id)
+                entity = await client.get_entity(peer_id)
+                await Function._reset_entity_attempts(redis_client=redis_client, peer_id=peer_id, target=target)
+                return entity
             except ValueError:
                 logger.info(f"Пользователь {peer_id} всё ещё недоступен после обновления кэша")
+                await Function._handle_failed_entity_fetch(
+                    redis_client=redis_client,
+                    session=session,
+                    peer_id=peer_id,
+                    target=target,
+                )
                 return Status(ok=False, message="UserNotFound")
             except Exception as e:
                 logger.info(f"Ошибка при получении пользователя {peer_id}: {e}")
+                await Function._handle_failed_entity_fetch(
+                    redis_client=redis_client,
+                    session=session,
+                    peer_id=peer_id,
+                    target=target,
+                )
                 return Status(ok=False, message="UnknownError")
 
     @staticmethod
