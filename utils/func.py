@@ -21,7 +21,7 @@ from db.sqlalchemy.models import (
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telethon import TelegramClient, events, functions  # type: ignore
-from telethon.errors import ChannelPrivateError, FloodWaitError
+from telethon.errors import ChannelPrivateError, FloodWaitError, UsernameInvalidError
 from telethon.hints import Entity, EntityLike
 from telethon.tl.functions.channels import GetFullChannelRequest  # type: ignore
 from telethon.tl.functions.messages import GetHistoryRequest
@@ -679,6 +679,15 @@ class Function:
                 target=target,
             )
             return Status(ok=False, message="ChannelPrivateError")
+        except UsernameInvalidError:
+            logger.error(f"Ошибка при получении пользователя {peer_id}: UsernameInvalidError")
+            await Function._handle_failed_entity_fetch(
+                redis_client=redis_client,
+                session=session,
+                peer_id=peer_id,
+                target=target,
+            )
+            return Status(ok=False, message="UsernameInvalidError")
         except ConnectionError as e:
             logger.error(f"Ошибка при получении пользователя {peer_id}: {e}")
             return Status(ok=False, message="ConnectionError")
