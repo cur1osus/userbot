@@ -167,6 +167,9 @@ async def _process_update(
     bot_id: int,
 ) -> None:
     msg_text = update.message
+    if not msg_text:
+        return
+
     triggers = await fn.get_keywords(session, redis_client, cashed=True)
     excludes = await fn.get_ignored_words(session, redis_client, cashed=True)
 
