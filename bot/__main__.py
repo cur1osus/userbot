@@ -47,7 +47,7 @@ async def set_tasks(
         sessionmaker,
         storage,
     )
-    scheduler.every(6).seconds.do(
+    scheduler.every(1).seconds.do(
         execute_jobs,
         client,
         sessionmaker,
@@ -74,9 +74,7 @@ async def cache_bot_identity(
 ) -> int | None:
     async with sessionmaker() as session:
         row = await session.execute(
-            select(UserBot.id, UserBot.user_manager_id)
-            .where(UserBot.path_session == path_session)
-            .limit(1)
+            select(UserBot.id, UserBot.user_manager_id).where(UserBot.path_session == path_session).limit(1)
         )
         bot_row = row.first()
 
