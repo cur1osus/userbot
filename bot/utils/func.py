@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 import msgpack
-from db.redis.redis_client import RedisClient
-from db.sqlalchemy.models import (
+from bot.db.func import RedisStorage
+from bot.db.models import (
     BannedUser,
     Bot,
     IgnoredWord,
@@ -20,32 +20,30 @@ from db.sqlalchemy.models import (
 )
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from telethon import TelegramClient, events, functions  # type: ignore
+from telethon import TelegramClient, events, functions
 from telethon.errors import ChannelPrivateError, FloodWaitError, UsernameInvalidError
 from telethon.hints import Entity, EntityLike
-from telethon.tl.functions.channels import GetFullChannelRequest  # type: ignore
+from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.updates import GetChannelDifferenceRequest  # type: ignore
-from telethon.tl.types import (  # type: ignore
+from telethon.tl.functions.updates import GetChannelDifferenceRequest
+from telethon.tl.types import (
     ChannelMessagesFilter,
     DialogFilter,
     InputChannel,
     Message,
     MessageRange,
 )
-from telethon.tl.types.updates import (  # type: ignore
-    ChannelDifferenceEmpty,
-    ChannelDifferenceTooLong,
-)
+from telethon.tl.types.updates import ChannelDifferenceEmpty, ChannelDifferenceTooLong
 
 logger = logging.getLogger(__name__)
+MAX_MESSAGE_ID = 2**31 - 1  # Max for Telegram message id (32-bit signed int)
 
 
 @dataclass
 class Status:
     ok: bool
     message: str = ""
-    data: dict = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 class Function:
@@ -53,14 +51,14 @@ class Function:
     async def _create_user_record(
         *,
         session: AsyncSession,
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
         username: str,
         message_id: int,
         chat_id: int,
         message: str,
         data_for_decision: dict[str, Any] | None,
     ) -> None:
-        bot_id = await redis_client.get("bot_id")
+        bot_id = await redis_storage.get("bot_id")
         user = UserAnalyzed(
             username=username,
             message_id=message_id,
@@ -74,6 +72,15 @@ class Function:
 
         session.add(user)
         await session.commit()
+
+    @staticmethod
+    async def _get_manager_id(redis_storage: RedisStorage) -> int | None:
+        manager_raw = await redis_storage.get("user_manager_id")
+        try:
+            return int(manager_raw)
+        except (TypeError, ValueError):
+            logger.warning("Некорректный user_manager_id в Redis: %s", manager_raw)
+            return None
 
     @staticmethod
     async def get_closer_data_user(session: AsyncSession, bot_id: int) -> UserAnalyzed | None:
@@ -144,7 +151,7 @@ class Function:
         ans: str,
         *,
         session: AsyncSession,
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
     ) -> bool | Status:
         send_attempt_key = Function._build_send_attempt_key(user)
         func = random.choices(
@@ -158,21 +165,25 @@ class Function:
         entity = await Function.safe_get_entity(
             client,
             user.username,
-            redis_client=redis_client,
+            redis_storage=redis_storage,
             session=session,
             target="user",
         )
         if isinstance(entity, Status):
             return entity
+        if isinstance(entity, list):
+            entity = entity[0] if entity else None
+        if entity is None or not hasattr(entity, "id"):
+            return Status(ok=False, message="EntityNotFound")
         f = False
         try:
             await func(client, user, entity.id, ans)
             f = True
-            await Function._reset_send_attempts(redis_client=redis_client, attempts_key=send_attempt_key)
+            await Function._reset_send_attempts(redis_storage=redis_storage, attempts_key=send_attempt_key)
         except Exception as e:
             logger.error(f"Ошибка при отправке сообщения: {e}")
             await Function._handle_failed_send_message(
-                redis_client=redis_client,
+                redis_storage=redis_storage,
                 session=session,
                 user=user,
                 attempts_key=send_attempt_key,
@@ -218,12 +229,14 @@ class Function:
 
     @staticmethod
     async def take_message_answer(
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
         session: AsyncSession,
     ) -> str:
-        if r := await redis_client.get("messages_to_answer"):
+        if r := await redis_storage.get("messages_to_answer"):
             return random.choice(r)
-        user_manager_id = await redis_client.get("user_manager_id")
+        user_manager_id = await Function._get_manager_id(redis_storage)
+        if user_manager_id is None:
+            return "Привет"
 
         r = (
             await session.scalars(
@@ -232,16 +245,18 @@ class Function:
         ).all()
         if not r:
             return "Привет"
-        await redis_client.save("messages_to_answer", r, 60)
+        await redis_storage.save("messages_to_answer", r, 60)
         return random.choice(r)
 
     @staticmethod
-    async def get_monitoring_chat(session: AsyncSession, bot_id: int):
+    async def get_monitoring_chat(session: AsyncSession, bot_id: int) -> list[str]:
         return (await session.scalars(select(MonitoringChat.chat_id).where(MonitoringChat.bot_id == bot_id))).all()
 
     @staticmethod
-    async def get_banned_usernames(session: AsyncSession, redis_client: RedisClient) -> list[str]:
-        user_manager_id = await redis_client.get("user_manager_id")
+    async def get_banned_usernames(session: AsyncSession, redis_storage: RedisStorage) -> list[str]:
+        user_manager_id = await Function._get_manager_id(redis_storage)
+        if user_manager_id is None:
+            return []
 
         return (
             await session.scalars(select(BannedUser.username).where(BannedUser.user_manager_id == user_manager_id))
@@ -250,38 +265,44 @@ class Function:
     @staticmethod
     async def get_ignored_words(
         session: AsyncSession,
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
         cashed: bool = False,
     ) -> set[str]:
-        if cashed and (r := await redis_client.get("ignored_words")):
+        if cashed and (r := await redis_storage.get("ignored_words")):
             return r
-        user_manager_id = await redis_client.get("user_manager_id")
+        user_manager_id = await Function._get_manager_id(redis_storage)
+        if user_manager_id is None:
+            return set()
 
         r = (
             await session.scalars(select(IgnoredWord.word).where(IgnoredWord.user_manager_id == user_manager_id))
         ).all()
         r = set(r)
-        await redis_client.save("ignored_words", r, 60)
+        await redis_storage.save("ignored_words", r, 60)
         return r
 
     @staticmethod
     async def get_keywords(
         session: AsyncSession,
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
         cashed: bool = False,
     ) -> set[str]:
-        if cashed and (r := await redis_client.get("keywords")):
+        if cashed and (r := await redis_storage.get("keywords")):
             return r
-        user_manager_id = await redis_client.get("user_manager_id")
+        user_manager_id = await Function._get_manager_id(redis_storage)
+        if user_manager_id is None:
+            return set()
 
         r = (await session.scalars(select(KeyWord.word).where(KeyWord.user_manager_id == user_manager_id))).all()
         r = set(r)
-        await redis_client.save("keywords", r, 60)
+        await redis_storage.save("keywords", r, 60)
         return r
 
     @staticmethod
-    async def get_messages_to_answer(session: AsyncSession, redis_client: RedisClient) -> list[str]:
-        user_manager_id = await redis_client.get("user_manager_id")
+    async def get_messages_to_answer(session: AsyncSession, redis_storage: RedisStorage) -> list[str]:
+        user_manager_id = await Function._get_manager_id(redis_storage)
+        if user_manager_id is None:
+            return []
 
         return (
             await session.scalars(
@@ -292,15 +313,22 @@ class Function:
     @staticmethod
     async def get_users_per_minute(
         session: AsyncSession,
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
         cashed: bool = False,
     ) -> int:
-        if cashed and (r := await redis_client.get("users_per_minute")):
-            return r
-        user_manager_id = await redis_client.get("user_manager_id")
-        r = await session.scalar(select(UserManager.users_per_minute).where(UserManager.id == user_manager_id))
-        await redis_client.save("users_per_minute", r, 60)
-        return r
+        if cashed and (r := await redis_storage.get("users_per_minute")):
+            return int(r)
+
+        user_manager_id = await Function._get_manager_id(redis_storage)
+        if user_manager_id is None:
+            return 1
+
+        users_per_minute = await session.scalar(
+            select(UserManager.users_per_minute).where(UserManager.id == user_manager_id)
+        )
+        users_per_minute = int(users_per_minute or 1)
+        await redis_storage.save("users_per_minute", users_per_minute, 60)
+        return users_per_minute
 
     @staticmethod
     async def user_exist(
@@ -314,12 +342,12 @@ class Function:
         username: str,
         event: events.NewMessage.Event,
         session: AsyncSession,
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
         data_for_decision: dict[str, Any] | None,
     ) -> None:
         await Function._create_user_record(
             session=session,
-            redis_client=redis_client,
+            redis_storage=redis_storage,
             username=username,
             message_id=event.message.id,
             chat_id=event.chat_id,
@@ -332,12 +360,12 @@ class Function:
         username: str,
         update: Message,
         session: AsyncSession,
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
         data_for_decision: dict[str, Any] | None,
     ) -> None:
         await Function._create_user_record(
             session=session,
-            redis_client=redis_client,
+            redis_storage=redis_storage,
             username=username,
             message_id=update.id,
             chat_id=update.peer_id.channel_id,
@@ -349,28 +377,34 @@ class Function:
     async def get_difference_update_channel(
         client: TelegramClient,
         chat_id: int,
-        redis_client: RedisClient,
-    ) -> list[Any]:
+        redis_storage: RedisStorage,
+    ) -> list[Message]:
         """Улучшенное получение обновлений для канала с максимальным охватом сообщений."""
         try:
-            channel = await Function.safe_get_entity(client, chat_id)
+            channel = await Function.safe_get_entity(
+                client,
+                chat_id,
+                redis_storage=redis_storage,
+                target="monitoring_chat",
+            )
+            if isinstance(channel, Status):
+                return []
             if not channel:
                 return []
 
             input_channel = InputChannel(channel.id, channel.access_hash)
-            chat_pts = await redis_client.get(chat_id)
+            chat_pts = await redis_storage.get(chat_id)
 
             # Инициализация PTS через GetFullChannelRequest при первом запуске
             if not chat_pts:
                 full_channel = await client(GetFullChannelRequest(input_channel))
                 pts = full_channel.full_chat.pts
-                await redis_client.save(chat_id, pts)
+                await redis_storage.save(chat_id, pts)
                 logger.info(f"Инициализирован PTS={pts} для канала {chat_id}")
             else:
                 pts = int(chat_pts)
 
             # Запрос разницы БЕЗ фильтра (критически важно!)
-            MAX_MESSAGE_ID = 2**31 - 1  # Макс. значение для 32-bit signed int (Telegram использует 32-bit ID)
             filter = ChannelMessagesFilter(ranges=[MessageRange(0, MAX_MESSAGE_ID)], exclude_new_messages=False)
             difference = await client(
                 GetChannelDifferenceRequest(
@@ -389,7 +423,7 @@ class Function:
 
             if isinstance(difference, ChannelDifferenceTooLong):
                 logger.warning(f"Канал {chat_id}: PTS={pts} сильно устарел. Получаем историю...")
-                return await Function._handle_too_long_state(client, input_channel, redis_client, chat_id)
+                return await Function._handle_too_long_state(client, input_channel, redis_storage, chat_id)
 
             # Сбор ВСЕХ сообщений (включая other_updates)
             updates = difference.new_messages.copy()
@@ -404,7 +438,7 @@ class Function:
 
             # Обновление PTS только если есть изменения
             if difference.pts > pts:
-                await redis_client.save(chat_id, difference.pts)
+                await redis_storage.save(chat_id, difference.pts)
                 logger.info(
                     f"Канал {chat_id}: получено {len(updates)} сообщений. PTS обновлен: {pts} → {difference.pts}"
                 )
@@ -423,9 +457,9 @@ class Function:
     async def _handle_too_long_state(
         client: TelegramClient,
         input_channel: InputChannel,
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
         chat_id: int,
-    ) -> list[Any]:
+    ) -> list[Message]:
         """Обработка устаревшего PTS через историю сообщений"""
         try:
             # Получаем последние 100 сообщений (максимум за один запрос)
@@ -445,7 +479,7 @@ class Function:
             # Обновляем PTS до актуального
             full_channel = await client(GetFullChannelRequest(input_channel))
             new_pts = full_channel.full_chat.pts
-            await redis_client.save(chat_id, new_pts)
+            await redis_storage.save(chat_id, new_pts)
 
             logger.warning(
                 f"Канал {chat_id}: восстановлено {len(history.messages)} сообщений "
@@ -462,7 +496,7 @@ class Function:
         name: str,
         bot_id: int,
         session: AsyncSession,
-    ):
+    ) -> bool:
         return bool(
             await session.scalar(
                 select(Job.id).where(
@@ -477,7 +511,7 @@ class Function:
         name: str,
         bot_id: int,
         sessionmaker: async_sessionmaker[AsyncSession],
-    ):
+    ) -> None:
         async with sessionmaker() as session:
             r = (
                 await session.scalars(
@@ -497,7 +531,7 @@ class Function:
         status: Status,
         bot_id: int,
         channel: Any = None,
-    ):
+    ) -> None:
         j = None
         async with sessionmaker() as session:
             match status.message:
@@ -531,19 +565,19 @@ class Function:
     @staticmethod
     async def _reset_entity_attempts(
         *,
-        redis_client: RedisClient | None,
+        redis_storage: RedisStorage | None,
         peer_id: EntityLike,
         target: Literal["user", "monitoring_chat"] | None,
     ) -> None:
         key = Function._build_attempt_key(peer_id, target)
-        if redis_client and key:
-            await redis_client.delete(key)
+        if redis_storage and key:
+            await redis_storage.delete(key)
 
     @staticmethod
     async def _delete_unavailable_entity(
         *,
         session: AsyncSession | None,
-        redis_client: RedisClient,
+        redis_storage: RedisStorage,
         target: Literal["user", "monitoring_chat"],
         peer_id: EntityLike,
         attempts_key: str,
@@ -554,7 +588,7 @@ class Function:
 
         bot_id = None
         with contextlib.suppress(Exception):
-            bot_id = await redis_client.get("bot_id")
+            bot_id = await redis_storage.get("bot_id")
             bot_id = int(bot_id) if bot_id is not None else None
 
         peer_value = str(peer_id)
@@ -574,42 +608,42 @@ class Function:
         record = await session.scalar(stmt)
         if not record:
             with contextlib.suppress(Exception):
-                await redis_client.delete(attempts_key)
+                await redis_storage.delete(attempts_key)
             return
 
         await session.delete(record)
         await session.commit()
         with contextlib.suppress(Exception):
-            await redis_client.delete(attempts_key)
+            await redis_storage.delete(attempts_key)
         logger.info("Удалена запись %s для peer_id=%s после 3 неудачных попыток", target, peer_value)
 
     @staticmethod
     async def _handle_failed_entity_fetch(
         *,
-        redis_client: RedisClient | None,
+        redis_storage: RedisStorage | None,
         session: AsyncSession | None,
         peer_id: EntityLike,
         target: Literal["user", "monitoring_chat"] | None,
     ) -> None:
-        if not redis_client or not target:
+        if not redis_storage or not target:
             return
 
         key = Function._build_attempt_key(peer_id, target)
         if not key:
             return
 
-        attempts_raw = await redis_client.get(key)
+        attempts_raw = await redis_storage.get(key)
         try:
             attempts = int(attempts_raw) + 1 if attempts_raw is not None else 1
         except (TypeError, ValueError):
             attempts = 1
 
-        await redis_client.save(key, attempts)
+        await redis_storage.save(key, attempts)
 
         if attempts >= 3:
             await Function._delete_unavailable_entity(
                 session=session,
-                redis_client=redis_client,
+                redis_storage=redis_storage,
                 target=target,
                 peer_id=peer_id,
                 attempts_key=key,
@@ -621,35 +655,35 @@ class Function:
         return f"send_message:user:{identifier}"
 
     @staticmethod
-    async def _reset_send_attempts(redis_client: RedisClient | None, attempts_key: str | None) -> None:
-        if redis_client and attempts_key:
-            await redis_client.delete(attempts_key)
+    async def _reset_send_attempts(redis_storage: RedisStorage | None, attempts_key: str | None) -> None:
+        if redis_storage and attempts_key:
+            await redis_storage.delete(attempts_key)
 
     @staticmethod
     async def _handle_failed_send_message(
         *,
-        redis_client: RedisClient | None,
+        redis_storage: RedisStorage | None,
         session: AsyncSession | None,
         user: UserAnalyzed,
         attempts_key: str | None,
     ) -> None:
-        if not redis_client or not attempts_key:
+        if not redis_storage or not attempts_key:
             return
 
-        attempts_raw = await redis_client.get(attempts_key)
+        attempts_raw = await redis_storage.get(attempts_key)
         try:
             attempts = int(attempts_raw) + 1 if attempts_raw is not None else 1
         except (TypeError, ValueError):
             attempts = 1
 
-        await redis_client.save(attempts_key, attempts)
+        await redis_storage.save(attempts_key, attempts)
 
         if attempts < 3 or not session:
             return
 
         await session.delete(user)
         await session.commit()
-        await redis_client.delete(attempts_key)
+        await redis_storage.delete(attempts_key)
         logger.info(
             "Удалён пользователь %s после 3 неудачных попыток отправки",
             user.username or user.id,
@@ -659,7 +693,7 @@ class Function:
     async def safe_get_entity(
         client: TelegramClient,
         peer_id: EntityLike,
-        redis_client: RedisClient | None = None,
+        redis_storage: RedisStorage | None = None,
         session: AsyncSession | None = None,
         target: Literal["user", "monitoring_chat"] | None = None,
     ) -> Entity | list[Entity] | Status | None:
@@ -668,12 +702,12 @@ class Function:
         try:
             # Сначала пробуем получить пользователя напрямую
             entity = await client.get_entity(peer_id)
-            await Function._reset_entity_attempts(redis_client=redis_client, peer_id=peer_id, target=target)
+            await Function._reset_entity_attempts(redis_storage=redis_storage, peer_id=peer_id, target=target)
             return entity
         except ChannelPrivateError:
             logger.error(f"Ошибка при получении пользователя {peer_id}: ChannelPrivateError")
             await Function._handle_failed_entity_fetch(
-                redis_client=redis_client,
+                redis_storage=redis_storage,
                 session=session,
                 peer_id=peer_id,
                 target=target,
@@ -682,7 +716,7 @@ class Function:
         except UsernameInvalidError:
             logger.error(f"Ошибка при получении пользователя {peer_id}: UsernameInvalidError")
             await Function._handle_failed_entity_fetch(
-                redis_client=redis_client,
+                redis_storage=redis_storage,
                 session=session,
                 peer_id=peer_id,
                 target=target,
@@ -704,12 +738,12 @@ class Function:
 
                 # Пробуем снова после обновления кэша
                 entity = await client.get_entity(peer_id)
-                await Function._reset_entity_attempts(redis_client=redis_client, peer_id=peer_id, target=target)
+                await Function._reset_entity_attempts(redis_storage=redis_storage, peer_id=peer_id, target=target)
                 return entity
             except ValueError:
                 logger.info(f"Пользователь {peer_id} всё ещё недоступен после обновления кэша")
                 await Function._handle_failed_entity_fetch(
-                    redis_client=redis_client,
+                    redis_storage=redis_storage,
                     session=session,
                     peer_id=peer_id,
                     target=target,
@@ -718,7 +752,7 @@ class Function:
             except Exception as e:
                 logger.info(f"Ошибка при получении пользователя {peer_id}: {e}")
                 await Function._handle_failed_entity_fetch(
-                    redis_client=redis_client,
+                    redis_storage=redis_storage,
                     session=session,
                     peer_id=peer_id,
                     target=target,
@@ -726,7 +760,7 @@ class Function:
                 return Status(ok=False, message="UnknownError")
 
     @staticmethod
-    async def get_folders_chat(client: TelegramClient) -> list[dict[str, Any]] | None:
+    async def get_folders_chat(client: TelegramClient) -> list[dict[str, Any]]:
         await client.catch_up()
         result = await client(functions.messages.GetDialogFiltersRequest())
         folders = result.filters
@@ -743,8 +777,8 @@ class Function:
     @staticmethod
     async def get_processed_users(
         client: TelegramClient,
-        folders: list[dict[str, list[dict[str, str] | str]]],
-    ) -> list[dict[str, list[dict[str, str] | str]]] | None:
+        folders: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         await client.catch_up()
         for folder in folders:
             users = []
@@ -785,11 +819,11 @@ class Function:
             bot.name = me.first_name
 
     @staticmethod
-    async def is_work(redis_client: RedisClient, session: AsyncSession, ttl: int = 5) -> bool:
-        if await redis_client.get("is_work"):
+    async def is_work(redis_storage: RedisStorage, session: AsyncSession, ttl: int = 5) -> bool:
+        if await redis_storage.get("is_work"):
             return True
 
-        bot_id = await redis_client.get("bot_id")
+        bot_id = await redis_storage.get("bot_id")
         r = await session.scalar(select(Bot.is_started).where(Bot.id == bot_id))
-        await redis_client.save("is_work", r, ttl)
-        return r
+        await redis_storage.save("is_work", r, ttl)
+        return bool(r)

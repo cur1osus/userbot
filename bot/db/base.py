@@ -1,9 +1,14 @@
-from __future__ import annotations
-
 from typing import Any
 
+from bot.settings import Settings
 from sqlalchemy.dialects.sqlite import INTEGER
-from sqlalchemy.ext.asyncio import AsyncAttrs
+from sqlalchemy.ext.asyncio import (
+    AsyncAttrs,
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -23,3 +28,21 @@ class Base(DeclarativeBase, AsyncAttrs):
             if col in self.repr_cols or idx < self.repr_cols_num
         ]
         return f"<{self.__class__.__name__} {', '.join(cols)}>"
+
+
+async def create_db_session_pool(
+    se: Settings,
+) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    engine: AsyncEngine = create_async_engine(
+        url=se.mysql_dsn(),
+        max_overflow=10,
+        pool_size=100,
+        pool_pre_ping=True,
+        pool_recycle=900,
+    )
+
+    return engine, async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def close_db(engine: AsyncEngine) -> None:
+    await engine.dispose()
