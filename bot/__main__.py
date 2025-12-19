@@ -1,10 +1,12 @@
 import argparse
 import asyncio
+import datetime
 import logging
 import os
 import stat
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from bot.background_tasks import execute_jobs, handling_difference_update_chanel, send_message, update_bot_name
 from bot.db.base import create_db_session_pool
@@ -28,6 +30,12 @@ args = parser.parse_args()
 bot_path_session: str = args.path_session
 bot_api_id: int = int(args.api_id)
 bot_api_hash: str = args.api_hash
+
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+
+
+def _moscow_time_converter(timestamp: float) -> time.struct_time:
+    return datetime.datetime.fromtimestamp(timestamp, tz=MOSCOW_TZ).timetuple()
 
 
 def ensure_session_writable(session_path: str) -> str | None:
@@ -227,7 +235,11 @@ if __name__ == "__main__":
     logging.getLogger("schedule").setLevel(logging.WARNING)
 
     # Формат логов
-    f = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    f = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S%z",
+    )
+    f.converter = _moscow_time_converter
 
     # Обработчик для вывода в консоль
     console_handler = logging.StreamHandler(sys.stdout)

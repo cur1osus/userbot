@@ -158,10 +158,17 @@ async def execute_jobs(
     redis_storage: RedisStorage,
 ) -> None:
     """Выполняет отложенные задания из таблицы jobs."""
+    bot_id = await _get_bot_id(redis_storage)
+    if bot_id is None:
+        return
+
     async with sessionmaker() as session:
         jobs: list[Job] = list(
             await session.scalars(
-                select(Job).where(Job.answer.is_(None)),
+                select(Job).where(
+                    Job.answer.is_(None),
+                    Job.bot_id == bot_id,
+                ),
             )
         )
         for job in jobs:
