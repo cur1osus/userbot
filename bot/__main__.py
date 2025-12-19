@@ -1,7 +1,10 @@
 import argparse
 import asyncio
 import logging
+import os
+import stat
 import sys
+from pathlib import Path
 
 from bot.background_tasks import execute_jobs, handling_difference_update_chanel, send_message, update_bot_name
 from bot.db.base import create_db_session_pool
@@ -25,6 +28,55 @@ args = parser.parse_args()
 bot_path_session: str = args.path_session
 bot_api_id: int = int(args.api_id)
 bot_api_hash: str = args.api_hash
+
+
+def ensure_session_writable(session_path: str) -> str | None:
+    """Validate session path/directory and try to make it writable."""
+    path = Path(session_path).expanduser()
+    session_dir = path.parent
+
+    try:
+        session_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error("Не удалось создать папку для сессии %s: %s", session_dir, exc)
+        return None
+
+    if not os.access(session_dir, os.W_OK):
+        try:
+            session_dir.chmod(session_dir.stat().st_mode | stat.S_IWUSR | stat.S_IXUSR)
+        except OSError as exc:
+            logger.error("Нет прав на запись в каталог сессии %s: %s", session_dir, exc)
+            return None
+
+    try:
+        if not path.exists():
+            path.touch(mode=0o600, exist_ok=True)
+        else:
+            mode = path.stat().st_mode
+            if not mode & stat.S_IWUSR:
+                path.chmod(mode | stat.S_IWUSR)
+    except OSError as exc:
+        logger.error("Не удалось подготовить файл сессии %s: %s", path, exc)
+        return None
+
+    try:
+        test_file = session_dir / f".{path.name}.write-test"
+        with open(test_file, "wb") as fh:
+            fh.write(b"ok")
+        test_file.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.error(
+            "Каталог %s недоступен для записи (для SQLite журнала): %s",
+            session_dir,
+            exc,
+        )
+        return None
+
+    if not os.access(path, os.W_OK):
+        logger.error("Файл сессии %s доступен только для чтения", path)
+        return None
+
+    return str(path)
 
 
 scheduler = Scheduler()
@@ -119,7 +171,17 @@ async def init_telethon_client() -> TelegramClient | None:
 
 
 async def main() -> None:
+    global bot_path_session
     logger.info("Запуск...")
+
+    prepared_session = ensure_session_writable(bot_path_session)
+    if prepared_session is None:
+        logger.error(
+            "Останавливаем бота: нет прав на запись в файл сессии (%s)",
+            bot_path_session,
+        )
+        return
+    bot_path_session = prepared_session
 
     # Инициализация redis
     redis = await se.redis_dsn()
