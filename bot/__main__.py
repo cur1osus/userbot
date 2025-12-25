@@ -114,7 +114,7 @@ async def set_tasks(
         sessionmaker,
         storage,
     )
-    scheduler.every(3).seconds.do(
+    scheduler.every(1).seconds.do(
         send_message,
         client,
         sessionmaker,

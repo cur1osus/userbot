@@ -1,5 +1,8 @@
-import datetime
+import asyncio
+import contextlib
 import logging
+import math
+import random
 from typing import Any, Final, cast
 
 import msgpack  # type: ignore
@@ -14,6 +17,8 @@ from telethon import TelegramClient  # type: ignore
 
 logger = logging.getLogger(__name__)
 SECONDS_PER_MINUTE: Final[int] = 60
+SEND_MESSAGE_JOB_INTERVAL_SECONDS: Final[int] = 1  # должен совпадать с расписанием в set_tasks
+SEND_MESSAGE_COUNTER_KEY: Final[str] = "send_message:per_minute"
 SessionFactory = async_sessionmaker[AsyncSession]
 
 
@@ -66,9 +71,14 @@ async def send_message(
         if users_per_minute <= 0:
             logger.warning("Некорректный лимит отправки сообщений: %s", users_per_minute)
             users_per_minute = 1
-        delay = max(1, SECONDS_PER_MINUTE // users_per_minute)
-        if not _should_send_now(delay):
+
+        sent_count, ttl_seconds = await _get_send_counter_state(redis_storage)
+        remaining_quota = users_per_minute - sent_count
+        if remaining_quota <= 0:
+            logger.debug("Лимит отправки сообщений за минуту исчерпан (ttl=%s)", ttl_seconds)
             return
+
+        batch_size = _calculate_batch_size(remaining_quota, ttl_seconds)
         if not await fn.is_work(redis_storage, session):
             logger.info("Отправка сообщения остановлена")
             return
@@ -81,21 +91,35 @@ async def send_message(
         if user_manager.is_antiflood_mode:
             logger.debug("Antiflood mode включен, отправка сообщений пропущена")
             return
-        user = await fn.get_closer_data_user(session, bot_id)
-        if not user:
+        users = await fn.get_closer_data_users(session, bot_id, limit=batch_size)
+        if not users:
             logger.debug("Нет пользователей в очереди на отправку")
             return
-        ans = await fn.take_message_answer(redis_storage, session)
-        await _send_message(
-            client,
-            user,
-            ans,
-            sessionmaker,
-            bot_id,
-            session,
-            redis_storage,
-        )
-        await session.commit()
+
+        sent_any = False
+        for idx, user in enumerate(users):
+            if not await _acquire_send_slot(redis_storage, users_per_minute):
+                logger.debug("Достигнут лимит отправки сообщений за минуту")
+                break
+            ans = await fn.take_message_answer(redis_storage, session)
+            sent_ok = await _send_message(
+                client,
+                user,
+                ans,
+                sessionmaker,
+                bot_id,
+                session,
+                redis_storage,
+            )
+            if not sent_ok:
+                await _release_send_slot(redis_storage)
+                continue
+            sent_any = True
+            if idx < len(users) - 1:
+                await _sleep_with_jitter(batch_size)
+
+        if sent_any:
+            await session.commit()
 
 
 async def handling_difference_update_chanel(
@@ -132,7 +156,7 @@ async def _send_message(
     bot_id: int,
     session: AsyncSession,
     redis_storage: RedisStorage,
-) -> None:
+) -> bool:
     r = await fn.send_message_random(
         client,
         user,
@@ -146,10 +170,12 @@ async def _send_message(
             status=r,
             bot_id=int(bot_id),
         )
-        return
+        return False
     if r:
         logger.info(f"Сообщение было отправлено успешно {user.username}")
         user.sended = True
+        return True
+    return False
 
 
 async def execute_jobs(
@@ -176,9 +202,73 @@ async def execute_jobs(
         await session.commit()
 
 
-def _should_send_now(delay_seconds: int) -> bool:
-    """Сигнализирует, настало ли время отправки сообщения."""
-    return datetime.datetime.now().second % delay_seconds == 0  # noqa: DTZ005
+async def _get_send_counter_state(redis_storage: RedisStorage) -> tuple[int, int]:
+    """Возвращает текущее значение счётчика и TTL окна в секундах."""
+    redis_key = redis_storage.build_key(SEND_MESSAGE_COUNTER_KEY)
+    try:
+        pipe = redis_storage._redis.pipeline()  # type: ignore[attr-defined]
+        pipe.get(redis_key)
+        pipe.ttl(redis_key)
+        count_raw, ttl = await pipe.execute()
+    except Exception as exc:  # pragma: no cover - телеметрия/сеть
+        logger.warning("Не удалось получить состояние счётчика отправки: %s", exc)
+        return 0, SECONDS_PER_MINUTE
+
+    try:
+        count = int(count_raw) if count_raw is not None else 0
+    except (TypeError, ValueError):
+        count = 0
+
+    ttl_seconds = ttl if isinstance(ttl, int) and ttl > 0 else SECONDS_PER_MINUTE
+    return count, ttl_seconds
+
+
+def _calculate_batch_size(remaining_quota: int, ttl_seconds: int) -> int:
+    """Равномерно распределяет отправки на оставшееся окно."""
+    cycles_left = max(1, math.ceil(ttl_seconds / SEND_MESSAGE_JOB_INTERVAL_SECONDS))
+    return max(1, min(remaining_quota, math.ceil(remaining_quota / cycles_left)))
+
+
+async def _acquire_send_slot(redis_storage: RedisStorage, users_per_minute: int) -> bool:
+    """Резервирует слот на отправку сообщения в текущем минутном окне."""
+    redis_key = redis_storage.build_key(SEND_MESSAGE_COUNTER_KEY)
+    try:
+        new_value = await redis_storage._redis.incr(redis_key)  # type: ignore[attr-defined]
+    except Exception as exc:  # pragma: no cover - телеметрия/сеть
+        logger.warning("Не удалось увеличить счётчик отправки сообщений: %s", exc)
+        return False
+
+    if new_value == 1:
+        await redis_storage._redis.expire(redis_key, SECONDS_PER_MINUTE)  # type: ignore[attr-defined]
+    else:
+        ttl = await redis_storage._redis.ttl(redis_key)  # type: ignore[attr-defined]
+        if ttl in (-1, -2):
+            await redis_storage._redis.expire(redis_key, SECONDS_PER_MINUTE)  # type: ignore[attr-defined]
+
+    if new_value > users_per_minute:
+        await redis_storage._redis.decr(redis_key)  # type: ignore[attr-defined]
+        return False
+    return True
+
+
+async def _release_send_slot(redis_storage: RedisStorage) -> None:
+    """Возвращает слот при неуспешной отправке."""
+    redis_key = redis_storage.build_key(SEND_MESSAGE_COUNTER_KEY)
+    with contextlib.suppress(Exception):  # pragma: no cover - телеметрия/сеть
+        current_raw = await redis_storage._redis.get(redis_key)  # type: ignore[attr-defined]
+        current_value = int(current_raw) if current_raw else 0
+        if current_value > 0:
+            await redis_storage._redis.decr(redis_key)  # type: ignore[attr-defined]
+
+
+async def _sleep_with_jitter(batch_size: int) -> None:
+    """Небольшой джиттер между отправками, чтобы не слать всё в одну секунду."""
+    if batch_size <= 1:
+        return
+    max_sleep = min(1.0, SEND_MESSAGE_JOB_INTERVAL_SECONDS / max(batch_size, 1))
+    delay = random.uniform(0, max_sleep)
+    if delay > 0:
+        await asyncio.sleep(delay)
 
 
 async def _process_channel_updates(
